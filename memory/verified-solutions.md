@@ -29,3 +29,18 @@
   - Фаззер: 5000 случайных битовых мутаций обработаны без падений памяти (ASan/UBSan чисты).
 - **Вывод:** Модуль готов к встраиванию в пайплайн загрузки PSP/TMR драйвера.
 
+### SOL-003: Парсер IP Discovery и планировщик апертур памяти UMA/ReBAR для Phoenix 780M
+- **Дата:** 11.10.2026
+- **Окружение:** `drip-pc`, Arch Linux x86_64, Clang 22.1.8 (ASan/UBSan).
+- **Команда проверки:**
+  ```bash
+  clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined src/amd/rdna3_ip_discovery.cpp src/amd/rdna3_rebar_uma.cpp tests/test_rdna3_discovery_uma.cpp -o tests/test_rdna3_discovery_uma && ./tests/test_rdna3_discovery_uma
+  ```
+- **Результат:** 100% тестов пройдено.
+  - IP Discovery: валидация бинарного заголовка (0x28211407), таблицы IPDS (0x53445049), контрольной суммы, извлечение регистровых смещений для GC 11.0.3, PSP 13.0.4, DMU 3.1.4, SDMA 6.0.3.
+  - UMA ReBAR: расчет апертур для 4 GiB VRAM в режиме Full ReBAR (BAR0 = 4 GiB, vram_limit = 4032 MiB, 0 байт High Pool) и Legacy (BAR0 = 256 MiB, High Pool = 3776 MiB).
+  - Защита инвариантов: строгий отказ при не-степени двойки, невыровненных адресах, расхождении ReBAR cap, перекрытии с консолью.
+  - Фаззер: 1000 мутационных прогонов без падений и утечек.
+- **Вывод:** Архитектура управления памятью и динамического обнаружения регистров Phoenix APU полностью верифицирована.
+
+

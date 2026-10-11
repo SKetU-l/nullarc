@@ -6,4 +6,5 @@ build/
 *.iso
 .current_notepad
 tests/test_rdna3_ucode
+tests/test_rdna3_discovery_uma
 tests/fixtures/
