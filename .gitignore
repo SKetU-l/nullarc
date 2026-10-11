@@ -1,0 +1,7 @@
+reference/
+build/
+*.o
+*.a
+*.so
+*.iso
+.current_notepad

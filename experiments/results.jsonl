@@ -1,0 +1,3 @@
+{"id": "EXP-001", "timestamp": "2026-10-11T09:54:10Z", "target": "xlat12_unit_tests", "env": "drip-pc_arch_linux", "command": "build/test_xlat12 && build/fuzz_xlat12 1000", "status": "PASS", "details": "2448 unit tests passed, fuzz 1000 iter passed"}
+{"id": "EXP-002", "timestamp": "2026-10-11T09:54:27Z", "target": "rebar_pure_tests", "env": "drip-pc_arch_linux", "command": "/tmp/native_rebar .", "status": "PARTIAL", "details": "189 pure math/rebar tests passed; 13 OpenCore config file checks failed due to missing host EFI configs"}
+{"id": "EXP-003", "timestamp": "2026-10-11T09:50:40Z", "target": "probe_laptop_hardware", "env": "ssh_192.168.31.237", "command": "lspci -nn", "status": "MISMATCH", "details": "Discovered Intel i3-3217U + GT 740M instead of target RDNA 3"}
