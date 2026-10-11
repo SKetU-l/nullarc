@@ -65,5 +65,21 @@
   - Сформирован и проверен образ регистров OTG (H/V Total, Blanking, Sync) и HUBP (DCSURF pitch=2560, config=ARGB8888, первичный MC адрес кадрового буфера).
 - **Вывод:** Модуль вывода изображения аппаратно откалиброван под родную матрицу ноутбука.
 
+### SOL-006: UserClient R3N и winsys-адаптер Mesa RADV для Phoenix GFX1103
+- **Дата:** 11.10.2026
+- **Окружение:** `drip-pc`, Arch Linux x86_64, Clang 22.1.8 (ASan/UBSan).
+- **Команда проверки:**
+  ```bash
+  clang++ -std=c++17 -Wall -Wextra -Werror -fsanitize=address,undefined src/uapi/r3n_user_client.cpp src/winsys/radv_r3n_winsys.cpp tests/test_r3n_abi.cpp -o tests/test_r3n_abi && ./tests/test_r3n_abi
+  ```
+- **Результат:** 100% тестов пройдено.
+  - ABI селекторы: Hello (проверка версии ABI 1.0, VMID 1, лимит 64 IBs), QueryInfo (12 CUs, GFX1103 rev 0xBA, 4 GiB VRAM, 2560x1600@120Hz).
+  - Память: выравнивание размеров BO по 4 KiB, отображение виртуальных адресов GPU (`VA_OP_MAP`/`UNMAP`), запрет невыровненных и повторных маппингов.
+  - Команды и синхронизация: валидация indirect buffers PM4, генерация монотонных seqno, проверка сигналов заборов.
+  - Scanout: полный цикл захвата дисплея, регистрации буфера кадра 2560x1600 и презентации кадров.
+  - Mesa RADV winsys: инициализация `RadvGpuInfo`, аллокация и маппинг дескрипторов буферов, отправка пакетов команд Vulkan.
+- **Вывод:** Стек взаимодействия с пространством пользователя и средой Mesa RADV Vulkan полностью верифицирован.
+
+
 
 
