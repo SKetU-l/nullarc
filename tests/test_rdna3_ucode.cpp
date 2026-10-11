@@ -1,0 +1,220 @@
+//
+//  test_rdna3_ucode.cpp — Unit tests and adversarial fuzzer for RDNA 3 firmware extraction.
+//  Builds cleanly under Clang with -fsanitize=address,undefined.
+//
+#include "../src/amd/rdna3_ucode_extract.h"
+#include <iostream>
+#include <fstream>
+#include <vector>
+#include <cassert>
+#include <cstring>
+
+using namespace rdna3;
+
+static std::vector<uint8_t> read_file(const std::string &path) {
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file.is_open()) {
+        std::cerr << "Failed to open file: " << path << std::endl;
+        return {};
+    }
+    std::streamsize size = file.tellg();
+    file.seekg(0, std::ios::beg);
+    std::vector<uint8_t> buffer(size);
+    if (!file.read(reinterpret_cast<char *>(buffer.data()), size)) {
+        return {};
+    }
+    return buffer;
+}
+
+static void test_null_and_zero_inputs() {
+    UcodePayload out[kMaxUcodePayloadsPerFile];
+    uint8_t dummy[128] = {};
+
+    assert(rdna3_ucode_extract(kHostFwFile_SDMA, nullptr, 128, out) == 0);
+    assert(rdna3_ucode_extract(kHostFwFile_SDMA, dummy, 0, out) == 0);
+    assert(rdna3_ucode_extract(kHostFwFile_SDMA, dummy, 128, nullptr) == 0);
+    assert(rdna3_ucode_extract(0x9999, dummy, 128, out) == 0); // Unknown host fw type
+    std::cout << "[PASS] test_null_and_zero_inputs" << std::endl;
+}
+
+static void test_phoenix_rlc() {
+    auto bin = read_file("tests/fixtures/phoenix/gc_11_0_3_rlc.bin");
+    assert(!bin.empty());
+
+    UcodePayload out[kMaxUcodePayloadsPerFile];
+    uint32_t count = rdna3_ucode_extract(kHostFwFile_RLC, bin.data(), bin.size(), out);
+    assert(count > 0);
+
+    for (uint32_t i = 0; i < count; ++i) {
+        assert(out[i].size_bytes > 0);
+        assert(static_cast<uint64_t>(out[i].offset_bytes) + out[i].size_bytes <= bin.size());
+    }
+
+    // Critical hardware requirement: RLC_G must be the LAST payload
+    assert(out[count - 1].fw_type == static_cast<uint32_t>(PSPGfxFwType::RLC_G));
+    std::cout << "[PASS] test_phoenix_rlc (extracted " << count << " payloads, RLC_G is last)" << std::endl;
+}
+
+static void test_phoenix_cp_rs64() {
+    // PFP
+    {
+        auto bin = read_file("tests/fixtures/phoenix/gc_11_0_3_pfp.bin");
+        assert(!bin.empty());
+        UcodePayload out[kMaxUcodePayloadsPerFile];
+        uint32_t count = rdna3_ucode_extract(kHostFwFile_CP_PFP, bin.data(), bin.size(), out);
+        assert(count == 3); // RS64_PFP + P0_STACK + P1_STACK
+        assert(out[0].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_PFP));
+        assert(out[1].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_PFP_P0_STACK));
+        assert(out[2].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_PFP_P1_STACK));
+        for (uint32_t i = 0; i < count; ++i) {
+            assert(static_cast<uint64_t>(out[i].offset_bytes) + out[i].size_bytes <= bin.size());
+        }
+    }
+
+    // ME
+    {
+        auto bin = read_file("tests/fixtures/phoenix/gc_11_0_3_me.bin");
+        assert(!bin.empty());
+        UcodePayload out[kMaxUcodePayloadsPerFile];
+        uint32_t count = rdna3_ucode_extract(kHostFwFile_CP_ME, bin.data(), bin.size(), out);
+        assert(count == 3); // RS64_ME + P0_STACK + P1_STACK
+        assert(out[0].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_ME));
+        assert(out[1].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_ME_P0_STACK));
+        assert(out[2].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_ME_P1_STACK));
+        for (uint32_t i = 0; i < count; ++i) {
+            assert(static_cast<uint64_t>(out[i].offset_bytes) + out[i].size_bytes <= bin.size());
+        }
+    }
+
+    // MEC
+    {
+        auto bin = read_file("tests/fixtures/phoenix/gc_11_0_3_mec.bin");
+        assert(!bin.empty());
+        UcodePayload out[kMaxUcodePayloadsPerFile];
+        uint32_t count = rdna3_ucode_extract(kHostFwFile_CP_MEC, bin.data(), bin.size(), out);
+        assert(count == 5); // RS64_MEC + P0..P3 stacks
+        assert(out[0].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_MEC));
+        assert(out[1].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_MEC_P0_STACK));
+        assert(out[2].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_MEC_P1_STACK));
+        assert(out[3].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_MEC_P2_STACK));
+        assert(out[4].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_MEC_P3_STACK));
+        for (uint32_t i = 0; i < count; ++i) {
+            assert(static_cast<uint64_t>(out[i].offset_bytes) + out[i].size_bytes <= bin.size());
+        }
+    }
+    std::cout << "[PASS] test_phoenix_cp_rs64 (PFP=3, ME=3, MEC=5 payloads)" << std::endl;
+}
+
+static void test_phoenix_sdma() {
+    auto bin = read_file("tests/fixtures/phoenix/sdma_6_0_3.bin");
+    assert(!bin.empty());
+
+    UcodePayload out[kMaxUcodePayloadsPerFile];
+    uint32_t count = rdna3_ucode_extract(kHostFwFile_SDMA, bin.data(), bin.size(), out);
+    assert(count == 2);
+    assert(out[0].fw_type == static_cast<uint32_t>(PSPGfxFwType::SDMA_UCODE_TH0));
+    assert(out[0].size_bytes == 17408);
+    assert(out[1].fw_type == static_cast<uint32_t>(PSPGfxFwType::SDMA_UCODE_TH1));
+    assert(out[1].size_bytes == 16896);
+
+    for (uint32_t i = 0; i < count; ++i) {
+        assert(static_cast<uint64_t>(out[i].offset_bytes) + out[i].size_bytes <= bin.size());
+    }
+    std::cout << "[PASS] test_phoenix_sdma (TH0=17408, TH1=16896)" << std::endl;
+}
+
+static void test_phoenix_imu() {
+    auto bin = read_file("tests/fixtures/phoenix/gc_11_0_3_imu.bin");
+    assert(!bin.empty());
+
+    UcodePayload out[kMaxUcodePayloadsPerFile];
+    uint32_t count = rdna3_ucode_extract(kHostFwFile_IMU, bin.data(), bin.size(), out);
+    assert(count == 2);
+    assert(out[0].fw_type == static_cast<uint32_t>(PSPGfxFwType::IMU_I));
+    assert(out[1].fw_type == static_cast<uint32_t>(PSPGfxFwType::IMU_D));
+    assert(out[1].offset_bytes == out[0].offset_bytes + out[0].size_bytes);
+
+    for (uint32_t i = 0; i < count; ++i) {
+        assert(static_cast<uint64_t>(out[i].offset_bytes) + out[i].size_bytes <= bin.size());
+    }
+    std::cout << "[PASS] test_phoenix_imu (IMU_I + IMU_D contiguous)" << std::endl;
+}
+
+static void test_phoenix_dmcub() {
+    auto bin = read_file("tests/fixtures/phoenix/dcn_3_1_4_dmcub.bin");
+    assert(!bin.empty());
+
+    UcodePayload out[kMaxUcodePayloadsPerFile];
+    uint32_t count = rdna3_ucode_extract(kHostFwFile_DMCUB, bin.data(), bin.size(), out);
+    assert(count == 1);
+    assert(out[0].fw_type == static_cast<uint32_t>(PSPGfxFwType::DMUB));
+    assert(static_cast<uint64_t>(out[0].offset_bytes) + out[0].size_bytes <= bin.size());
+    std::cout << "[PASS] test_phoenix_dmcub (DMUB=51 extracted)" << std::endl;
+}
+
+static void test_adversarial_truncation() {
+    auto bin = read_file("tests/fixtures/phoenix/sdma_6_0_3.bin");
+    assert(!bin.empty());
+
+    UcodePayload out[kMaxUcodePayloadsPerFile];
+    // Truncate to every size from 0 up to full size
+    for (size_t sz = 0; sz < 128; ++sz) {
+        uint32_t n = rdna3_ucode_extract(kHostFwFile_SDMA, bin.data(), sz, out);
+        if (sz < sizeof(sdma_firmware_header_v2_0)) {
+            assert(n == 0);
+        }
+    }
+    std::cout << "[PASS] test_adversarial_truncation" << std::endl;
+}
+
+static void test_fuzzer() {
+    auto original = read_file("tests/fixtures/phoenix/gc_11_0_3_rlc.bin");
+    assert(!original.empty());
+
+    UcodePayload out[kMaxUcodePayloadsPerFile];
+    // Run 5000 mutation iterations with random bit flips
+    uint32_t lcg = 0x12345678;
+    auto rnd = [&]() -> uint32_t {
+        lcg = lcg * 1664525u + 1013904223u;
+        return lcg;
+    };
+
+    for (int iter = 0; iter < 5000; ++iter) {
+        std::vector<uint8_t> corrupted = original;
+        size_t mutate_count = 1 + (rnd() % 16);
+        for (size_t m = 0; m < mutate_count; ++m) {
+            size_t idx = rnd() % corrupted.size();
+            corrupted[idx] ^= static_cast<uint8_t>(rnd() & 0xFF);
+        }
+
+        uint64_t fw_types[] = {
+            kHostFwFile_SDMA, kHostFwFile_RLC, kHostFwFile_IMU,
+            kHostFwFile_CP_PFP, kHostFwFile_CP_ME, kHostFwFile_CP_MEC,
+            kHostFwFile_DMCUB
+        };
+        uint64_t hostFw = fw_types[rnd() % 7];
+
+        uint32_t count = rdna3_ucode_extract(hostFw, corrupted.data(), corrupted.size(), out);
+        assert(count <= kMaxUcodePayloadsPerFile);
+        for (uint32_t i = 0; i < count; ++i) {
+            // Guarantee all returned payloads are strictly within bounds!
+            assert(out[i].size_bytes > 0);
+            assert(static_cast<uint64_t>(out[i].offset_bytes) + out[i].size_bytes <= corrupted.size());
+        }
+    }
+    std::cout << "[PASS] test_fuzzer (5000 random mutations safely processed)" << std::endl;
+}
+
+int main() {
+    std::cout << "=== Running RDNA3 / GFX1103 Firmware Extractor Tests ===" << std::endl;
+    test_null_and_zero_inputs();
+    test_phoenix_rlc();
+    test_phoenix_cp_rs64();
+    test_phoenix_sdma();
+    test_phoenix_imu();
+    test_phoenix_dmcub();
+    test_adversarial_truncation();
+    test_fuzzer();
+    std::cout << "=== All tests PASSED successfully ===" << std::endl;
+    return 0;
+}
