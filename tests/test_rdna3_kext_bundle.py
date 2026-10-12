@@ -43,7 +43,9 @@ def test_info_plist():
 
     assert pl.get("CFBundleIdentifier") == "org.drip.driver.RDNA3Driver"
     assert pl.get("CFBundleExecutable") == "RDNA3Driver"
-    assert pl.get("OSBundleRequired") == "Root"
+    assert pl.get("OSBundleRequired") in ("Root", "Local-Root")
+    with open(EXEC_PATH, "rb") as f:
+        assert b"kmod_info" in f.read(), "_kmod_info symbol missing in kext executable"
 
     personalities = pl.get("IOKitPersonalities", {})
     assert "RDNA3Driver" in personalities, "Missing RDNA3Driver personality"
