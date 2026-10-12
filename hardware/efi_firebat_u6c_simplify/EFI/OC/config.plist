@@ -266,7 +266,7 @@
 				<key>Comment</key>
 				<string></string>
 				<key>Enabled</key>
-				<true/>
+				<false/>
 				<key>ExecutablePath</key>
 				<string>Contents/MacOS/NootedRed</string>
 				<key>MaxKernel</key>
@@ -1458,7 +1458,7 @@
 				<key>Count</key>
 				<integer>1</integer>
 				<key>Enabled</key>
-				<true/>
+				<false/>
 				<key>Find</key>
 				<data>
 				hAB1Sw==
@@ -1610,7 +1610,7 @@
 				<key>Count</key>
 				<integer>0</integer>
 				<key>Enabled</key>
-				<false/>
+				<true/>
 				<key>Find</key>
 				<data>
 				icCB4v//AP+BygAAAQC5dwIAAA==
@@ -1647,7 +1647,7 @@
 				<key>Count</key>
 				<integer>0</integer>
 				<key>Enabled</key>
-				<true/>
+				<false/>
 				<key>Find</key>
 				<data>
 				icCB4v//AP+BygAAAQC5dwIAAA==
@@ -1850,9 +1850,9 @@
 		<key>Debug</key>
 		<dict>
 			<key>AppleDebug</key>
-			<false/>
+			<true/>
 			<key>ApplePanic</key>
-			<false/>
+			<true/>
 			<key>DisableWatchDog</key>
 			<true/>
 			<key>DisplayDelay</key>
@@ -1864,7 +1864,7 @@
 			<key>SysReport</key>
 			<false/>
 			<key>Target</key>
-			<integer>3</integer>
+			<integer>67</integer>
 		</dict>
 		<key>Entries</key>
 		<array/>
@@ -1949,7 +1949,7 @@
 				AAAAAAAAAAAAAAAAAAA=
 				</data>
 				<key>boot-args</key>
-				<string>-v debug=0x100 keepsyms=1 -vi2c-force-polling npci=0x3000 -radcodec revpatch=cpuname,sbvmm</string>
+				<string>-v debug=0x100 keepsyms=1 -vi2c-force-polling -radcodec revpatch=cpuname,sbvmm</string>
 				<key>csr-active-config</key>
 				<data>
 				AwoAAA==
