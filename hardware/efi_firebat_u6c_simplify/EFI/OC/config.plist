@@ -66,7 +66,7 @@
 				<key>Comment</key>
 				<string>SSDT-XOSI.aml</string>
 				<key>Enabled</key>
-				<true/>
+				<false/>
 				<key>Path</key>
 				<string>SSDT-XOSI.aml</string>
 			</dict>
@@ -85,7 +85,7 @@
 				<key>Count</key>
 				<integer>0</integer>
 				<key>Enabled</key>
-				<true/>
+				<false/>
 				<key>Find</key>
 				<data>
 				X09TSQ==
@@ -111,6 +111,7 @@
 				<integer>0</integer>
 				<key>TableSignature</key>
 				<data>
+				RFNEVA==
 				</data>
 			</dict>
 		</array>
@@ -206,7 +207,7 @@
 			<key>RebuildAppleMemoryMap</key>
 			<true/>
 			<key>ResizeAppleGpuBars</key>
-			<integer>-1</integer>
+			<integer>0</integer>
 			<key>SetupVirtualMap</key>
 			<false/>
 			<key>SignalAppleOS</key>
@@ -1814,7 +1815,7 @@
 			<key>LegacyCommpage</key>
 			<false/>
 			<key>PanicNoKextDump</key>
-			<false/>
+			<true/>
 			<key>PowerTimeoutKernelPanic</key>
 			<true/>
 			<key>ProvideCurrentCpuInfo</key>
@@ -1977,7 +1978,7 @@
 				AAAAAAAAAAAAAAAAAAA=
 				</data>
 				<key>boot-args</key>
-				<string>-v debug=0x100 keepsyms=1 -vi2c-force-polling -radcodec revpatch=cpuname,sbvmm</string>
+				<string>-v debug=0x100 keepsyms=1 -vi2c-force-polling revpatch=cpuname,sbvmm msgbuf=1048576</string>
 				<key>csr-active-config</key>
 				<data>
 				AwoAAA==
