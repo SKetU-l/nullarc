@@ -185,7 +185,7 @@
 			<key>ClearTaskSwitchBit</key>
 			<false/>
 			<key>DevirtualiseMmio</key>
-			<false/>
+			<true/>
 			<key>DisableSingleUser</key>
 			<false/>
 			<key>DisableVariableWrite</key>
@@ -195,7 +195,7 @@
 			<key>EnableSafeModeSlide</key>
 			<true/>
 			<key>EnableWriteUnprotector</key>
-			<true/>
+			<false/>
 			<key>FixupAppleEfiImages</key>
 			<false/>
 			<key>ForceBooterSignature</key>
@@ -213,7 +213,7 @@
 			<key>ProvideMaxSlide</key>
 			<integer>0</integer>
 			<key>RebuildAppleMemoryMap</key>
-			<false/>
+			<true/>
 			<key>ResizeAppleGpuBars</key>
 			<integer>0</integer>
 			<key>SetupVirtualMap</key>
@@ -221,7 +221,7 @@
 			<key>SignalAppleOS</key>
 			<false/>
 			<key>SyncRuntimePermissions</key>
-			<false/>
+			<true/>
 		</dict>
 	</dict>
 	<key>DeviceProperties</key>
@@ -1986,7 +1986,7 @@
 				AAAAAAAAAAAAAAAAAAA=
 				</data>
 				<key>boot-args</key>
-				<string>-v debug=0x100 keepsyms=1 -vi2c-force-polling revpatch=cpuname,sbvmm msgbuf=1048576 npci=0x3000 -dbgenhdbg -dbgenhbeta</string>
+				<string>-v debug=0x100 keepsyms=1 -vi2c-force-polling revpatch=cpuname,sbvmm msgbuf=1048576 -dbgenhdbg -dbgenhbeta</string>
 				<key>csr-active-config</key>
 				<data>
 				AwoAAA==
@@ -2243,7 +2243,7 @@
 			<key>ConsoleMode</key>
 			<string></string>
 			<key>DirectGopRendering</key>
-			<false/>
+			<true/>
 			<key>ForceResolution</key>
 			<false/>
 			<key>GopBurstMode</key>
