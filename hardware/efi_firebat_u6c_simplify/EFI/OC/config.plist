@@ -70,6 +70,14 @@
 				<key>Path</key>
 				<string>SSDT-XOSI.aml</string>
 			</dict>
+			<dict>
+				<key>Comment</key>
+				<string>Generic CPU definition for B550/A520/Zen 3/Hawk Point</string>
+				<key>Enabled</key>
+				<true/>
+				<key>Path</key>
+				<string>SSDT-CPUR.aml</string>
+			</dict>
 		</array>
 		<key>Delete</key>
 		<array/>
@@ -209,7 +217,7 @@
 			<key>ResizeAppleGpuBars</key>
 			<integer>0</integer>
 			<key>SetupVirtualMap</key>
-			<true/>
+			<false/>
 			<key>SignalAppleOS</key>
 			<false/>
 			<key>SyncRuntimePermissions</key>
@@ -295,7 +303,7 @@
 				<key>Comment</key>
 				<string>Print early kernel debug to screen</string>
 				<key>Enabled</key>
-				<true/>
+				<false/>
 				<key>ExecutablePath</key>
 				<string>Contents/MacOS/DebugEnhancer</string>
 				<key>MaxKernel</key>
@@ -1978,7 +1986,7 @@
 				AAAAAAAAAAAAAAAAAAA=
 				</data>
 				<key>boot-args</key>
-				<string>-v debug=0x100 keepsyms=1 -vi2c-force-polling revpatch=cpuname,sbvmm -dbgenhdbg msgbuf=1048576</string>
+				<string>-v debug=0x100 keepsyms=1 -vi2c-force-polling revpatch=cpuname,sbvmm msgbuf=1048576</string>
 				<key>csr-active-config</key>
 				<data>
 				AwoAAA==
