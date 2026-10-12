@@ -188,7 +188,7 @@
 			<key>EnableWriteUnprotector</key>
 			<false/>
 			<key>FixupAppleEfiImages</key>
-			<true/>
+			<false/>
 			<key>ForceBooterSignature</key>
 			<false/>
 			<key>ForceExitBootServices</key>
@@ -208,7 +208,7 @@
 			<key>ResizeAppleGpuBars</key>
 			<integer>-1</integer>
 			<key>SetupVirtualMap</key>
-			<true/>
+			<false/>
 			<key>SignalAppleOS</key>
 			<false/>
 			<key>SyncRuntimePermissions</key>
@@ -294,7 +294,7 @@
 				<key>Comment</key>
 				<string>Print early kernel debug to screen</string>
 				<key>Enabled</key>
-				<true/>
+				<false/>
 				<key>ExecutablePath</key>
 				<string>Contents/MacOS/DebugEnhancer</string>
 				<key>MaxKernel</key>
@@ -1638,7 +1638,7 @@
 				<key>Count</key>
 				<integer>0</integer>
 				<key>Enabled</key>
-				<true/>
+				<false/>
 				<key>Find</key>
 				<data>
 				icCB4v//AP+BygAAAQC5dwIAAA==
@@ -1675,7 +1675,7 @@
 				<key>Count</key>
 				<integer>0</integer>
 				<key>Enabled</key>
-				<false/>
+				<true/>
 				<key>Find</key>
 				<data>
 				icCB4v//AP+BygAAAQC5dwIAAA==
@@ -1810,7 +1810,7 @@
 			<key>IncreasePciBarSize</key>
 			<false/>
 			<key>LapicKernelPanic</key>
-			<true/>
+			<false/>
 			<key>LegacyCommpage</key>
 			<false/>
 			<key>PanicNoKextDump</key>
@@ -1977,7 +1977,7 @@
 				AAAAAAAAAAAAAAAAAAA=
 				</data>
 				<key>boot-args</key>
-				<string>-v debug=0x100 keepsyms=1 -vi2c-force-polling -radcodec revpatch=cpuname,sbvmm -dbgenhdbg msgbuf=1048576</string>
+				<string>-v debug=0x100 keepsyms=1 -vi2c-force-polling -radcodec revpatch=cpuname,sbvmm</string>
 				<key>csr-active-config</key>
 				<data>
 				AwoAAA==
