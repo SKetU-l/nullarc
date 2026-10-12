@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 tools/build_kext.py — Build script for native RDNA3Driver.kext targeting macOS Sonoma/Tahoe.
-Compiles freestanding C++17 modules with MacKernelSDK headers using Clang and ld64.lld.
+Compiles freestanding C++17 modules and kmod_info glue with MacKernelSDK headers using Clang and ld64.lld.
 """
 
 import os
@@ -20,13 +20,17 @@ DEST_KEXT_DIR = os.path.join(PROJECT_ROOT, "hardware", "efi_firebat_u6c_simplify
 CONFIG_PATH = os.path.join(PROJECT_ROOT, "hardware", "efi_firebat_u6c_simplify", "EFI", "OC", "config.plist")
 OCVALIDATE_PATH = "/tmp/opencore_extracted/Utilities/ocvalidate/ocvalidate.linux"
 
-SOURCES = [
+CXX_SOURCES = [
     os.path.join(PROJECT_ROOT, "src", "kext", "RDNA3Driver.cpp"),
     os.path.join(PROJECT_ROOT, "src", "kext", "RDNA3UserClient.cpp"),
     os.path.join(PROJECT_ROOT, "src", "amd", "rdna3_dcn314_scanout.cpp"),
     os.path.join(PROJECT_ROOT, "src", "amd", "rdna3_ip_discovery.cpp"),
     os.path.join(PROJECT_ROOT, "src", "amd", "rdna3_rebar_uma.cpp"),
     os.path.join(PROJECT_ROOT, "src", "amd", "rdna3_ip_blocks.cpp"),
+]
+
+C_SOURCES = [
+    os.path.join(PROJECT_ROOT, "src", "kext", "kmod_info.c"),
 ]
 
 def run_cmd(cmd, check=True):
@@ -43,8 +47,7 @@ def build_kext():
     os.makedirs(BUILD_DIR, exist_ok=True)
     os.makedirs(os.path.join(KEXT_BUNDLE_DIR, "Contents", "MacOS"), exist_ok=True)
 
-    cflags = [
-        "clang++",
+    common_flags = [
         "-arch", "x86_64",
         "-target", "x86_64-apple-macos14.0",
         "-mmacosx-version-min=14.0",
@@ -57,22 +60,36 @@ def build_kext():
         "-fno-common",
         "-fno-stack-protector",
         "-mkernel",
+        "-Wall",
+        "-Os",
+        "-g",
+    ]
+
+    cxx_flags = ["clang++"] + common_flags + [
         "-fapple-kext",
         "-std=c++17",
         "-fno-exceptions",
         "-fno-rtti",
         "-fcheck-new",
         "-fno-c++-static-destructors",
-        "-Wall",
-        "-Os",
-        "-g",
+    ]
+
+    c_flags = ["clang"] + common_flags + [
+        "-std=c11",
     ]
 
     objects = []
-    for src in SOURCES:
+    for src in CXX_SOURCES:
         basename = os.path.splitext(os.path.basename(src))[0]
         obj = os.path.join(BUILD_DIR, f"{basename}.o")
-        cmd = cflags + ["-c", src, "-o", obj]
+        cmd = cxx_flags + ["-c", src, "-o", obj]
+        run_cmd(cmd)
+        objects.append(obj)
+
+    for src in C_SOURCES:
+        basename = os.path.splitext(os.path.basename(src))[0]
+        obj = os.path.join(BUILD_DIR, f"{basename}.o")
+        cmd = c_flags + ["-c", src, "-o", obj]
         run_cmd(cmd)
         objects.append(obj)
 
@@ -93,6 +110,9 @@ def build_kext():
     with open(raw_binary, "rb") as f:
         data = bytearray(f.read())
     struct.pack_into("<I", data, 12, 0x0B)
+
+    # Check for mandatory kmod_info symbol
+    assert b"kmod_info" in data, "ERROR: _kmod_info symbol missing in compiled kext binary!"
 
     kext_exec = os.path.join(KEXT_BUNDLE_DIR, "Contents", "MacOS", "RDNA3Driver")
     with open(kext_exec, "wb") as f:
@@ -130,7 +150,6 @@ def build_kext():
             "MinKernel": "22.0.0",
             "PlistPath": "Contents/Info.plist"
         }
-        # Insert after VirtualSMC (index 2)
         kext_entries.insert(2, new_entry)
         pl["Kernel"]["Add"] = kext_entries
 
