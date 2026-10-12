@@ -5,16 +5,13 @@
 #include <mach/mach_types.h>
 #include <libkern/OSKextLib.h>
 
-extern kern_return_t _start(kmod_info_t *ki, void *data);
-extern kern_return_t _stop(kmod_info_t *ki, void *data);
-
-static kern_return_t r3n_kmod_start(kmod_info_t *ki, void *data) {
+kern_return_t _start(kmod_info_t *ki, void *data) {
     (void)ki;
     (void)data;
     return KERN_SUCCESS;
 }
 
-static kern_return_t r3n_kmod_stop(kmod_info_t *ki, void *data) {
+kern_return_t _stop(kmod_info_t *ki, void *data) {
     (void)ki;
     (void)data;
     return KERN_SUCCESS;
@@ -22,5 +19,6 @@ static kern_return_t r3n_kmod_stop(kmod_info_t *ki, void *data) {
 
 KMOD_EXPLICIT_DECL(org.drip.driver.RDNA3Driver, "1.0.0", _start, _stop)
 
-__private_extern__ kmod_start_func_t *_realmain = r3n_kmod_start;
-__private_extern__ kmod_stop_func_t  *_antimain = r3n_kmod_stop;
+__private_extern__ kmod_start_func_t *_realmain = 0;
+__private_extern__ kmod_stop_func_t  *_antimain = 0;
+__private_extern__ int _kext_apple_cc = __APPLE_CC__;
