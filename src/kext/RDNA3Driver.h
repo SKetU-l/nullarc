@@ -28,6 +28,30 @@ private:
     uint64_t            m_vramPhysBase{0};
     uint64_t            m_vramSize{0};
 
+    class KextMmioBus final : public rdna3::IMmioBus {
+    private:
+        volatile uint32_t *m_base{nullptr};
+        size_t             m_dword_limit{0};
+
+    public:
+        KextMmioBus() = default;
+        void configure(void *vbase, size_t size_bytes) {
+            m_base = static_cast<volatile uint32_t*>(vbase);
+            m_dword_limit = size_bytes / sizeof(uint32_t);
+        }
+        uint32_t read32(uint32_t dword_offset) override {
+            if (!m_base || dword_offset >= m_dword_limit) return 0xFFFFFFFFu;
+            return m_base[dword_offset];
+        }
+        void write32(uint32_t dword_offset, uint32_t value) override {
+            if (!m_base || dword_offset >= m_dword_limit) return;
+            m_base[dword_offset] = value;
+        }
+        void operator delete(void *, size_t) {}
+        void operator delete(void *) {}
+    };
+
+    KextMmioBus          m_mmioBus{};
     rdna3::DeviceContext m_devCtx{};
     rdna3::DisplayTimings m_activeTimings{};
     bool                m_scanoutActive{false};

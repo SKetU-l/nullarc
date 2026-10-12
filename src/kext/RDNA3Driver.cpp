@@ -9,33 +9,6 @@
 
 OSDefineMetaClassAndStructors(RDNA3Driver, IOService)
 
-namespace {
-
-class KextMmioBus : public rdna3::IMmioBus {
-private:
-    volatile uint32_t *m_base{nullptr};
-    size_t             m_dword_limit{0};
-
-public:
-    KextMmioBus(void *vbase, size_t size_bytes)
-        : m_base(static_cast<volatile uint32_t*>(vbase)),
-          m_dword_limit(size_bytes / sizeof(uint32_t)) {}
-
-    uint32_t read32(uint32_t dword_offset) override {
-        if (!m_base || dword_offset >= m_dword_limit) return 0xFFFFFFFFu;
-        return m_base[dword_offset];
-    }
-
-    void write32(uint32_t dword_offset, uint32_t value) override {
-        if (!m_base || dword_offset >= m_dword_limit) return;
-        m_base[dword_offset] = value;
-    }
-};
-
-static KextMmioBus *s_mmioBus = nullptr;
-
-} // namespace
-
 bool RDNA3Driver::init(OSDictionary *propTable) {
     if (!super::init(propTable)) return false;
     DRIVER_LOG("Initializing RDNA3Driver module (build: native-sonoma-tahoe)");
@@ -101,9 +74,8 @@ bool RDNA3Driver::start(IOService *provider) {
         m_mmioVirtualBase = reinterpret_cast<uint8_t*>(m_bar5Map->getVirtualAddress());
         DRIVER_LOG("BAR5 (MMIO Aperture) mapped: Size %llu KB", m_mmioSize / 1024);
 
-        delete s_mmioBus;
-        s_mmioBus = new KextMmioBus(m_mmioVirtualBase, m_mmioSize);
-        m_devCtx.mmio = s_mmioBus;
+        m_mmioBus.configure(m_mmioVirtualBase, m_mmioSize);
+        m_devCtx.mmio = &m_mmioBus;
     } else {
         DRIVER_LOG("Warning: Unable to map BAR5 MMIO aperture");
     }
@@ -141,6 +113,8 @@ bool RDNA3Driver::start(IOService *provider) {
 
 void RDNA3Driver::stop(IOService *provider) {
     DRIVER_LOG("Stopping RDNA3Driver");
+    m_devCtx.mmio = nullptr;
+    m_mmioBus.configure(nullptr, 0);
     if (m_bar5Map) {
         m_bar5Map->release();
         m_bar5Map = nullptr;
@@ -149,8 +123,6 @@ void RDNA3Driver::stop(IOService *provider) {
         m_bar0Map->release();
         m_bar0Map = nullptr;
     }
-    delete s_mmioBus;
-    s_mmioBus = nullptr;
     super::stop(provider);
 }
 
