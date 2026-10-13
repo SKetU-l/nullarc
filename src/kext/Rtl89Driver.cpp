@@ -5,6 +5,8 @@
 #include "Rtl89Driver.h"
 #include "Rtl89UserClient.h"
 #include "rtw8852b_fw_bin.h"
+#include <pexpert/pexpert.h>
+#include <libkern/c++/OSString.h>
 
 #ifdef super
 #undef super
@@ -117,6 +119,23 @@ bool Rtl89Driver::start(IOService *provider) {
     registerService();
 
     m_hardwareReady = true;
+
+    // Check Auto-Join (Recovery / Installer auto-connect)
+    char autoSsid[64] = {0};
+    char autoPass[64] = {0};
+    if (PE_parse_boot_argn("rtl89_ssid", autoSsid, sizeof(autoSsid)) &&
+        PE_parse_boot_argn("rtl89_pass", autoPass, sizeof(autoPass))) {
+        IOLog("Rtl89Driver: Auto-connecting to SSID '%s' from boot-args\n", autoSsid);
+        connectNetwork(autoSsid, autoPass);
+    } else {
+        OSString *propSsid = OSDynamicCast(OSString, getProperty("AutoJoinSSID"));
+        OSString *propPass = OSDynamicCast(OSString, getProperty("AutoJoinPassword"));
+        if (propSsid && propPass && propSsid->getLength() > 0) {
+            IOLog("Rtl89Driver: Auto-connecting to SSID '%s' from Info.plist\n", propSsid->getCStringNoCopy());
+            connectNetwork(propSsid->getCStringNoCopy(), propPass->getCStringNoCopy());
+        }
+    }
+
     return true;
 }
 
@@ -262,7 +281,22 @@ int Rtl89Driver::triggerScan(const uint8_t *channels, size_t num_channels) {
 }
 
 int Rtl89Driver::connectNetwork(const char *ssid, const char *passphrase) {
+    if (!ssid || !passphrase) return -EINVAL;
+
     const bss_entry *target = m_bssCache.find_by_ssid(ssid);
+    if (!target) {
+        bss_entry fallback = {};
+        snprintf(fallback.ssid, sizeof(fallback.ssid), "%s", ssid);
+        fallback.ssid_len = static_cast<uint8_t>(strlen(fallback.ssid));
+        fallback.channel = 6;
+        fallback.wpa2 = true;
+        fallback.privacy = true;
+        fallback.akm_suites = WLAN_AKM_SUITE_PSK;
+        fallback.pairwise_ciphers = WLAN_CIPHER_SUITE_CCMP;
+        fallback.rssi = -50;
+        m_bssCache.update_or_add(fallback);
+        target = m_bssCache.find_by_ssid(ssid);
+    }
     if (!target) return -ENOENT;
 
     memcpy(m_connectedBssid, target->bssid, 6);

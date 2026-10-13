@@ -249,6 +249,21 @@ size_t BssCache::get_entries(bss_entry *out_entries, size_t max_count) const {
     return to_copy;
 }
 
+int BssCache::update_or_add(const bss_entry &entry) {
+    for (size_t i = 0; i < m_count; i++) {
+        if (strcmp(m_entries[i].ssid, entry.ssid) == 0) {
+            m_entries[i] = entry;
+            return 0;
+        }
+    }
+    if (m_count < MAX_BSS_ENTRIES) {
+        m_entries[m_count++] = entry;
+        return 0;
+    }
+    m_entries[0] = entry;
+    return 0;
+}
+
 void BssCache::age_out(uint64_t current_time_ms, uint64_t max_age_ms) {
     size_t write_idx = 0;
     for (size_t read_idx = 0; read_idx < m_count; read_idx++) {

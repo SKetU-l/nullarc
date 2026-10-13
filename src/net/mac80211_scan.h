@@ -93,6 +93,7 @@ public:
     const bss_entry *get_entry_at(size_t index) const;
 
     // Cache management
+    int    update_or_add(const bss_entry &entry);
     size_t get_entries(bss_entry *out_entries, size_t max_count) const;
     void   age_out(uint64_t current_time_ms, uint64_t max_age_ms);
     void   clear();
