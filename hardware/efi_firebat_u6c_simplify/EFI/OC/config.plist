@@ -142,7 +142,64 @@
 	<key>Booter</key>
 	<dict>
 		<key>MmioWhitelist</key>
-		<array/>
+		<array>
+			<dict>
+				<key>Address</key>
+				<integer>4262133760</integer>
+				<key>Comment</key>
+				<string>AMD ERAX MMIO</string>
+				<key>Enabled</key>
+				<true/>
+			</dict>
+			<dict>
+				<key>Address</key>
+				<integer>4275044352</integer>
+				<key>Comment</key>
+				<string>HPET MMIO</string>
+				<key>Enabled</key>
+				<true/>
+			</dict>
+			<dict>
+				<key>Address</key>
+				<integer>4275306496</integer>
+				<key>Comment</key>
+				<string>fTPM MMIO</string>
+				<key>Enabled</key>
+				<true/>
+			</dict>
+			<dict>
+				<key>Address</key>
+				<integer>4275568640</integer>
+				<key>Comment</key>
+				<string>AMD FCH AcpiMmio / PMIO / SMI</string>
+				<key>Enabled</key>
+				<true/>
+			</dict>
+			<dict>
+				<key>Address</key>
+				<integer>4275830784</integer>
+				<key>Comment</key>
+				<string>AMD FCH UART / I2C / AOAC</string>
+				<key>Enabled</key>
+				<true/>
+			</dict>
+			<dict>
+				<key>Address</key>
+				<integer>4276092928</integer>
+				<key>Comment</key>
+				<string>LAPIC MMIO</string>
+				<key>Enabled</key>
+				<true/>
+			</dict>
+			<dict>
+				<key>Address</key>
+				<integer>4278190080</integer>
+				<key>Comment</key>
+				<string>16MB SPI Flash ROM (NVRAM Runtime)</string>
+				<key>Enabled</key>
+				<true/>
+			</dict>
+		</array>
 		<key>Patch</key>
 		<array>
 			<dict>
@@ -185,7 +242,7 @@
 			<key>ClearTaskSwitchBit</key>
 			<false/>
 			<key>DevirtualiseMmio</key>
-			<false/>
+			<true/>
 			<key>DisableSingleUser</key>
 			<false/>
 			<key>DisableVariableWrite</key>
@@ -211,13 +268,13 @@
 			<key>ProvideCustomSlide</key>
 			<true/>
 			<key>ProvideMaxSlide</key>
-			<integer>0</integer>
+			<integer>100</integer>
 			<key>RebuildAppleMemoryMap</key>
 			<true/>
 			<key>ResizeAppleGpuBars</key>
 			<integer>-1</integer>
 			<key>SetupVirtualMap</key>
-			<false/>
+			<true/>
 			<key>SignalAppleOS</key>
 			<false/>
 			<key>SyncRuntimePermissions</key>
