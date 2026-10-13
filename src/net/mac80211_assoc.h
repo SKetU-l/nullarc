@@ -8,8 +8,13 @@
 #include "mac80211_scan.h"
 #include "skbuff.h"
 
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+#include <stddef.h>
+#include <stdint.h>
+#else
 #include <cstddef>
 #include <cstdint>
+#endif
 
 // 802.11 Authentication Algorithm Numbers
 #define WLAN_AUTH_OPEN                  0

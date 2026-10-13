@@ -11,8 +11,13 @@
 #include "rtw8852be_reg.h"
 #include "rtw8852be_mmio.h"
 
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+#include <stddef.h>
+#include <stdint.h>
+#else
 #include <cstddef>
 #include <cstdint>
+#endif
 
 #define RTW89_MAX_MTU                   2304
 #define RTW89_MAX_FRAGS                 8

@@ -9,8 +9,13 @@
 #include "sha1.h"
 #include "skbuff.h"
 
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+#include <stddef.h>
+#include <stdint.h>
+#else
 #include <cstddef>
 #include <cstdint>
+#endif
 
 // EAPOL Protocol definitions
 #define ETH_P_EAPOL                     0x888E

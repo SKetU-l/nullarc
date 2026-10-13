@@ -4,8 +4,10 @@
 //
 #include "rtw8852be_phy.h"
 
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
 #include <algorithm>
 #include <cerrno>
+#endif
 
 // ============================================================================
 // 1. Channel Frequency Conversion (Strictly Integer Math)
@@ -232,20 +234,21 @@ const rtw89_power_entry* rtw89_get_power_entry(uint8_t channel) {
 // ============================================================================
 
 int8_t rtw89_phy_clamp_power(int8_t power_dbm, int8_t max_limit_dbm) {
-    return std::min(power_dbm, max_limit_dbm);
+    return (power_dbm < max_limit_dbm) ? power_dbm : max_limit_dbm;
 }
 
 int16_t rtw89_phy_clamp_power_half_dbm(int16_t power_half_dbm, int16_t max_limit) {
-    return std::min(power_half_dbm, max_limit);
+    return (power_half_dbm < max_limit) ? power_half_dbm : max_limit;
 }
 
 int16_t rtw89_phy_clamp_power_quarter_dbm(int16_t power_quarter_dbm, int16_t max_limit) {
-    return std::min(power_quarter_dbm, max_limit);
+    return (power_quarter_dbm < max_limit) ? power_quarter_dbm : max_limit;
 }
 
 void rtw89_phy_clamp_power(rtw89_regulatory_table &table, int8_t max_limit_dbm) {
     for (size_t i = 0; i < table.count; ++i) {
-        table.entries[i].clamped_power_dbm = std::min(table.entries[i].raw_limit_dbm, max_limit_dbm);
+        int8_t raw = table.entries[i].raw_limit_dbm;
+        table.entries[i].clamped_power_dbm = (raw < max_limit_dbm) ? raw : max_limit_dbm;
         table.entries[i].power_half_dbm = static_cast<int16_t>(table.entries[i].clamped_power_dbm) * 2;
         table.entries[i].power_quarter_dbm = static_cast<int16_t>(table.entries[i].clamped_power_dbm) * 4;
         table.entries[i].power_mw = rtw89_dbm_to_mw_fixed(table.entries[i].clamped_power_dbm);

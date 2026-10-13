@@ -6,8 +6,13 @@
 #include "linux_shim.h"
 #include "skbuff.h"
 
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+#include <stddef.h>
+#include <stdint.h>
+#else
 #include <cstddef>
 #include <cstdint>
+#endif
 
 // 802.11 Frame Control Type definitions
 #define IEEE80211_FTYPE_MGMT            0x00

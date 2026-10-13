@@ -8,9 +8,14 @@
 #include "rtw8852be_reg.h"
 #include "rtw8852be_mmio.h"
 
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+#include <stdint.h>
+#include <sys/errno.h>
+#else
 #include <cerrno>
 #include <cstdint>
 #include <functional>
+#endif
 
 // ============================================================================
 // 1. Additional PCIe Register & Bitfield Definitions
@@ -104,10 +109,17 @@ struct rtw89_pci_info {
     } saved_regs;
 
     // Optional PCIe Configuration Space hooks
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
     using ConfigRead16 = std::function<int(uint16_t offset, uint16_t *val)>;
     using ConfigWrite16 = std::function<int(uint16_t offset, uint16_t val)>;
     ConfigRead16 config_read16{nullptr};
     ConfigWrite16 config_write16{nullptr};
+#else
+    using ConfigRead16 = int (*)(uint16_t offset, uint16_t *val);
+    using ConfigWrite16 = int (*)(uint16_t offset, uint16_t val);
+    ConfigRead16 config_read16{nullptr};
+    ConfigWrite16 config_write16{nullptr};
+#endif
 };
 
 // ============================================================================

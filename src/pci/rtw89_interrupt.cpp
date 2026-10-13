@@ -3,7 +3,9 @@
 //
 #include "rtw89_interrupt.h"
 
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
 #include <cerrno>
+#endif
 
 int rtw89_pci_irq_init(rtw89_irq_info *irq, Rtw89Mmio *mmio, bool msi) {
     if (!irq || !mmio) {
@@ -95,9 +97,15 @@ bool rtw89_pci_irq_top_half(rtw89_irq_info *irq) {
         irq->tx_event_count.fetch_add(1, std::memory_order_relaxed);
     }
 
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
     if (irq->bottom_half_trigger) {
         irq->bottom_half_trigger();
     }
+#else
+    if (irq->bottom_half_trigger) {
+        irq->bottom_half_trigger(irq->bottom_half_ctx);
+    }
+#endif
 
     return true;
 }

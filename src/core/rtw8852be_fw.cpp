@@ -3,9 +3,11 @@
 //
 #include "rtw8852be_fw.h"
 
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
 #include <algorithm>
 #include <chrono>
 #include <thread>
+#endif
 
 // ============================================================================
 // 1. Checksum and Integrity Algorithms
@@ -366,9 +368,11 @@ int rtw89_h2c_tx(struct rtw89_dev *rtwdev, struct sk_buff *skb, bool fwdl) {
     if (rtwdev && rtwdev->h2c_tx_fn) {
         ret = rtwdev->h2c_tx_fn(rtwdev, skb, fwdl);
     } else if (rtwdev) {
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
         // Record packet for verification
         std::vector<uint8_t> pkt(skb->data, skb->data + skb->len);
         rtwdev->tx_history.push_back(std::move(pkt));
+#endif
     }
 
     kfree_skb(skb);
@@ -384,6 +388,34 @@ int rtw89_fw_check_rdy(Rtw89Mmio *mmio, uint32_t timeout_us) {
         return -EINVAL;
     }
 
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+    uint32_t waited_us = 0;
+    while (true) {
+        uint32_t status = mmio->read32(R_AX_FWDL_STATUS_V1);
+        uint32_t sts_val = FIELD_GET(B_AX_WCPU_FWDL_STS_MASK, status);
+
+        if (sts_val == RTW89_FWDL_WCPU_FW_INIT_RDY) {
+            return 0;
+        }
+
+        if (sts_val == RTW89_FWDL_CHECKSUM_FAIL ||
+            sts_val == RTW89_FWDL_SECURITY_FAIL ||
+            sts_val == RTW89_FWDL_CV_NOT_MATCH) {
+            return -EIO;
+        }
+
+        if (waited_us >= timeout_us) {
+            status = mmio->read32(R_AX_FWDL_STATUS_V1);
+            if (FIELD_GET(B_AX_WCPU_FWDL_STS_MASK, status) == RTW89_FWDL_WCPU_FW_INIT_RDY) {
+                return 0;
+            }
+            return -ETIMEDOUT;
+        }
+
+        IODelay(10);
+        waited_us += 10;
+    }
+#else
     auto start = std::chrono::steady_clock::now();
     while (true) {
         uint32_t status = mmio->read32(R_AX_FWDL_STATUS_V1);
@@ -412,6 +444,7 @@ int rtw89_fw_check_rdy(Rtw89Mmio *mmio, uint32_t timeout_us) {
 
         std::this_thread::sleep_for(std::chrono::microseconds(10));
     }
+#endif
 }
 
 int rtw89_fw_check_rdy(struct rtw89_dev *rtwdev, uint32_t timeout_us) {
@@ -470,7 +503,8 @@ int rtw89_fw_download(struct rtw89_dev *rtwdev, const uint8_t *fw_bin, size_t fw
 
         uint32_t sent = 0;
         while (sent < sec.len) {
-            uint32_t chunk_len = std::min<uint32_t>(sec.len - sent, RTW89_FWDL_CHUNK_SIZE);
+            uint32_t remaining = sec.len - sent;
+            uint32_t chunk_len = (remaining < RTW89_FWDL_CHUNK_SIZE) ? remaining : RTW89_FWDL_CHUNK_SIZE;
             struct sk_buff *skb = rtw89_fw_h2c_alloc_skb_with_hdr(rtwdev, chunk_len);
             if (!skb) {
                 return -ENOMEM;

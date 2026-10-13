@@ -3,7 +3,11 @@
 //
 #include "sha1.h"
 
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+#include <string.h>
+#else
 #include <cstring>
+#endif
 
 static inline uint32_t rol32(uint32_t value, uint32_t bits) {
     return (value << bits) | (value >> (32 - bits));

@@ -3,8 +3,10 @@
 //
 #include "rtw8852be_mmio.h"
 
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
 #include <cstring>
 #include <sstream>
+#endif
 
 // ============================================================================
 // 1. Rtw89Mmio Default Implementations
@@ -35,13 +37,17 @@ uint8_t Rtw89Mmio::read8_mask(uint32_t addr, uint8_t mask) {
 }
 
 void Rtw89Mmio::write32_set(uint32_t addr, uint32_t bit) {
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
     std::lock_guard<std::mutex> lock(rmw_mutex_);
+#endif
     uint32_t val = read32(addr);
     write32(addr, val | bit);
 }
 
 void Rtw89Mmio::write32_clr(uint32_t addr, uint32_t bit) {
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
     std::lock_guard<std::mutex> lock(rmw_mutex_);
+#endif
     uint32_t val = read32(addr);
     write32(addr, val & ~bit);
 }
@@ -50,43 +56,76 @@ void Rtw89Mmio::write32_mask(uint32_t addr, uint32_t mask, uint32_t val) {
     if (mask == 0) {
         return;
     }
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
     std::lock_guard<std::mutex> lock(rmw_mutex_);
+#endif
     uint32_t orig = read32(addr);
     uint32_t set = (orig & ~mask) | static_cast<uint32_t>(FIELD_PREP(mask, val));
     write32(addr, set);
 }
 
 void Rtw89Mmio::write16_set(uint32_t addr, uint16_t bit) {
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
     std::lock_guard<std::mutex> lock(rmw_mutex_);
+#endif
     uint16_t val = read16(addr);
     write16(addr, val | bit);
 }
 
 void Rtw89Mmio::write16_clr(uint32_t addr, uint16_t bit) {
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
     std::lock_guard<std::mutex> lock(rmw_mutex_);
+#endif
     uint16_t val = read16(addr);
     write16(addr, val & ~bit);
 }
 
 void Rtw89Mmio::write8_set(uint32_t addr, uint8_t bit) {
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
     std::lock_guard<std::mutex> lock(rmw_mutex_);
+#endif
     uint8_t val = read8(addr);
     write8(addr, val | bit);
 }
 
 void Rtw89Mmio::write8_clr(uint32_t addr, uint8_t bit) {
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
     std::lock_guard<std::mutex> lock(rmw_mutex_);
+#endif
     uint8_t val = read8(addr);
     write8(addr, val & ~bit);
 }
 
 int Rtw89Mmio::poll_timeout_atomic(uint32_t addr, uint64_t mask, uint64_t target_val,
                                    uint32_t timeout_us, uint32_t sleep_us) {
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+    uint32_t waited = 0;
+    while (true) {
+        uint32_t val = read32(addr);
+        if ((static_cast<uint64_t>(val) & mask) == target_val) {
+            return 0;
+        }
+        if (waited >= timeout_us) {
+            val = read32(addr);
+            if ((static_cast<uint64_t>(val) & mask) == target_val) return 0;
+            return -ETIMEDOUT;
+        }
+        if (sleep_us > 0) {
+            IODelay(sleep_us);
+            waited += sleep_us;
+        } else {
+            IODelay(1);
+            waited += 1;
+        }
+    }
+#else
     return poll_timeout_atomic(addr, [mask, target_val](uint32_t val) {
         return (static_cast<uint64_t>(val) & mask) == target_val;
     }, timeout_us, sleep_us);
+#endif
 }
 
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
 // ============================================================================
 // 2. MockMmioBus Implementations
 // ============================================================================
@@ -260,6 +299,7 @@ void MockMmioBus::reset_memory() {
     write_handlers_.clear();
     reset_stats();
 }
+#endif
 
 // ============================================================================
 // 3. DirectMmioBus Implementations
@@ -270,7 +310,11 @@ DirectMmioBus::DirectMmioBus(volatile void *base, size_t size, bool strict_align
 
 uint8_t DirectMmioBus::read8(uint32_t addr) {
     if (addr + 1 > size_) {
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
         throw std::out_of_range("Direct MMIO address out of range");
+#else
+        return 0xFF;
+#endif
     }
     rmb();
     return base_[addr];
@@ -278,10 +322,18 @@ uint8_t DirectMmioBus::read8(uint32_t addr) {
 
 uint16_t DirectMmioBus::read16(uint32_t addr) {
     if (strict_alignment_ && (addr & 1) != 0) {
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
         throw std::runtime_error("Unaligned 16-bit direct MMIO read");
+#else
+        return 0xFFFF;
+#endif
     }
     if (addr + 2 > size_) {
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
         throw std::out_of_range("Direct MMIO address out of range");
+#else
+        return 0xFFFF;
+#endif
     }
     rmb();
     volatile const uint16_t *ptr = reinterpret_cast<volatile const uint16_t *>(base_ + addr);
@@ -290,10 +342,18 @@ uint16_t DirectMmioBus::read16(uint32_t addr) {
 
 uint32_t DirectMmioBus::read32(uint32_t addr) {
     if (strict_alignment_ && (addr & 3) != 0) {
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
         throw std::runtime_error("Unaligned 32-bit direct MMIO read");
+#else
+        return 0xFFFFFFFF;
+#endif
     }
     if (addr + 4 > size_) {
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
         throw std::out_of_range("Direct MMIO address out of range");
+#else
+        return 0xFFFFFFFF;
+#endif
     }
     rmb();
     volatile const uint32_t *ptr = reinterpret_cast<volatile const uint32_t *>(base_ + addr);
@@ -302,7 +362,11 @@ uint32_t DirectMmioBus::read32(uint32_t addr) {
 
 void DirectMmioBus::write8(uint32_t addr, uint8_t val) {
     if (addr + 1 > size_) {
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
         throw std::out_of_range("Direct MMIO address out of range");
+#else
+        return;
+#endif
     }
     base_[addr] = val;
     wmb();
@@ -310,10 +374,18 @@ void DirectMmioBus::write8(uint32_t addr, uint8_t val) {
 
 void DirectMmioBus::write16(uint32_t addr, uint16_t val) {
     if (strict_alignment_ && (addr & 1) != 0) {
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
         throw std::runtime_error("Unaligned 16-bit direct MMIO write");
+#else
+        return;
+#endif
     }
     if (addr + 2 > size_) {
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
         throw std::out_of_range("Direct MMIO address out of range");
+#else
+        return;
+#endif
     }
     volatile uint16_t *ptr = reinterpret_cast<volatile uint16_t *>(base_ + addr);
     *ptr = cpu_to_le16(val);
@@ -322,10 +394,18 @@ void DirectMmioBus::write16(uint32_t addr, uint16_t val) {
 
 void DirectMmioBus::write32(uint32_t addr, uint32_t val) {
     if (strict_alignment_ && (addr & 3) != 0) {
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
         throw std::runtime_error("Unaligned 32-bit direct MMIO write");
+#else
+        return;
+#endif
     }
     if (addr + 4 > size_) {
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
         throw std::out_of_range("Direct MMIO address out of range");
+#else
+        return;
+#endif
     }
     volatile uint32_t *ptr = reinterpret_cast<volatile uint32_t *>(base_ + addr);
     *ptr = cpu_to_le32(val);

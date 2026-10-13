@@ -3,8 +3,13 @@
 //
 #pragma once
 
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+#include <stddef.h>
+#include <stdint.h>
+#else
 #include <cstddef>
 #include <cstdint>
+#endif
 
 struct sha1_ctx {
     uint32_t state[5];

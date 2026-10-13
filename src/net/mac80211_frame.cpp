@@ -3,8 +3,13 @@
 //
 #include "mac80211_frame.h"
 
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+#include <sys/errno.h>
+#include <string.h>
+#else
 #include <cerrno>
 #include <cstring>
+#endif
 
 uint8_t ieee80211_get_fc_type(uint16_t fc) {
     return static_cast<uint8_t>((fc >> 2) & 0x03);
