@@ -39,9 +39,9 @@
 			<key>IOUserClientClass</key>
 			<string>Rtl89UserClient</string>
 			<key>AutoJoinSSID</key>
-			<string></string>
+			<string>luuumi-dev</string>
 			<key>AutoJoinPassword</key>
-			<string></string>
+			<string>13259877</string>
 		</dict>
 	</dict>
 	<key>OSBundleLibraries</key>
