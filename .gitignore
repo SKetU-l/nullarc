@@ -9,6 +9,9 @@ tests/test_rdna3_ucode
 tests/test_rdna3_discovery_uma
 tests/test_rdna3_ip_dcn
 tests/test_r3n_abi
+tests/test_rtw89_compat
+tests/test_rtw89_fw_bin
+tests/test_rtw89_ring_workqueue
 tests/fixtures/
 __pycache__/
 *.pyc
