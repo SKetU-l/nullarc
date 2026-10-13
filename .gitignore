@@ -12,6 +12,10 @@ tests/test_r3n_abi
 tests/test_rtw89_compat
 tests/test_rtw89_fw_bin
 tests/test_rtw89_ring_workqueue
+tests/test_rtw89_reg_map
+tests/test_rtw89_aspm
+tests/test_rtw89_fw
+tests/test_rtw89_rf
 tests/fixtures/
 __pycache__/
 *.pyc
