@@ -33,7 +33,7 @@ class Rtl89Driver : public IOEthernetController {
 
 private:
     IOPCIDevice               *m_pciDevice{nullptr};
-    IOMemoryMap               *m_bar0Map{nullptr};
+    IOMemoryMap               *m_barMap{nullptr};
     uint8_t                   *m_mmioBase{nullptr};
     uint64_t                   m_mmioSize{0};
     IOEthernetInterface       *m_netif{nullptr};
@@ -49,8 +49,14 @@ private:
         ~KextMmioBus() override = default;
 
         void configure(void *vbase, size_t size) {
-            m_base = static_cast<volatile uint8_t *>(vbase);
-            m_size = size;
+            uintptr_t addr = reinterpret_cast<uintptr_t>(vbase);
+            if (addr >= 0xFFFF800000000000ULL) {
+                m_base = static_cast<volatile uint8_t *>(vbase);
+                m_size = size;
+            } else {
+                m_base = nullptr;
+                m_size = 0;
+            }
         }
 
         uint8_t read8(uint32_t offset) override {
