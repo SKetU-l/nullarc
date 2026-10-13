@@ -16,6 +16,10 @@ tests/test_rtw89_reg_map
 tests/test_rtw89_aspm
 tests/test_rtw89_fw
 tests/test_rtw89_rf
+tests/test_rtw89_dma
+tests/test_rtw89_rings
+tests/test_rtw89_interrupt
+tests/test_rtw89_tx
 tests/fixtures/
 __pycache__/
 *.pyc
