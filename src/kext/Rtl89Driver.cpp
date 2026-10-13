@@ -20,7 +20,7 @@ bool Rtl89Driver::init(OSDictionary *properties) {
         return false;
     }
     m_pciDevice = nullptr;
-    m_bar0Map = nullptr;
+    m_barMap = nullptr;
     m_mmioBase = nullptr;
     m_mmioSize = 0;
     m_netif = nullptr;
@@ -68,15 +68,33 @@ bool Rtl89Driver::start(IOService *provider) {
     m_pciDevice->setBusMasterEnable(true);
     m_pciDevice->setMemoryEnable(true);
 
-    // 2. Map PCIe BAR0 MMIO Registers
-    m_bar0Map = m_pciDevice->mapDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0);
-    if (!m_bar0Map) {
+    // 2. Map PCIe MMIO Registers
+    // Realtek RTL8852BE 64-bit MMIO aperture is located on BAR 2 (kIOPCIConfigBaseAddress2 = 0x18);
+    // BAR 0 (0x10) is legacy I/O port space and cannot be mapped as virtual memory.
+    m_barMap = m_pciDevice->mapDeviceMemoryWithRegister(kIOPCIConfigBaseAddress2);
+    if (!m_barMap) {
+        m_barMap = m_pciDevice->mapDeviceMemoryWithRegister(kIOPCIConfigBaseAddress0);
+    }
+    if (!m_barMap && m_pciDevice->getDeviceMemoryCount() > 0) {
+        m_barMap = m_pciDevice->mapDeviceMemoryWithIndex(0);
+    }
+    if (!m_barMap) {
+        IOLog("Rtl89Driver: Unable to map PCIe device memory\n");
         return false;
     }
 
-    m_mmioBase = reinterpret_cast<uint8_t *>(m_bar0Map->getVirtualAddress());
-    m_mmioSize = m_bar0Map->getLength();
+    IOVirtualAddress vaddr = m_barMap->getVirtualAddress();
+    if (vaddr < 0xFFFF800000000000ULL) {
+        IOLog("Rtl89Driver: Virtual address 0x%lx is not a kernel memory mapping (likely I/O port), aborting\n", (unsigned long)vaddr);
+        m_barMap->release();
+        m_barMap = nullptr;
+        return false;
+    }
+
+    m_mmioBase = reinterpret_cast<uint8_t *>(vaddr);
+    m_mmioSize = m_barMap->getLength();
     m_mmio.configure(m_mmioBase, m_mmioSize);
+    IOLog("Rtl89Driver: MMIO aperture mapped at %p (length %llu KB)\n", m_mmioBase, m_mmioSize / 1024);
 
     // 3. Disable PCIe ASPM L1 / L1SS on AMD Phoenix / Hawk Point Root Complex
     rtw89_pci_init(&m_pciInfo, &m_mmio);
@@ -103,15 +121,15 @@ bool Rtl89Driver::start(IOService *provider) {
 
     // 9. Setup Medium Tables
     if (!createMediumTables()) {
-        m_bar0Map->release();
-        m_bar0Map = nullptr;
+        m_barMap->release();
+        m_barMap = nullptr;
         return false;
     }
 
     // 10. Instantiate and Attach IOEthernetInterface
     if (!attachInterface(reinterpret_cast<IONetworkInterface **>(&m_netif), true)) {
-        m_bar0Map->release();
-        m_bar0Map = nullptr;
+        m_barMap->release();
+        m_barMap = nullptr;
         return false;
     }
 
@@ -151,9 +169,9 @@ void Rtl89Driver::stop(IOService *provider) {
         m_netif = nullptr;
     }
 
-    if (m_bar0Map) {
-        m_bar0Map->release();
-        m_bar0Map = nullptr;
+    if (m_barMap) {
+        m_barMap->release();
+        m_barMap = nullptr;
         m_mmioBase = nullptr;
         m_mmioSize = 0;
     }
@@ -166,21 +184,39 @@ void Rtl89Driver::free() {
 }
 
 void Rtl89Driver::readMacAddress() {
-    m_macAddr.bytes[0] = m_mmio.read8(R_AX_MAC_ADDR_0);
-    m_macAddr.bytes[1] = m_mmio.read8(R_AX_MAC_ADDR_1);
-    m_macAddr.bytes[2] = m_mmio.read8(R_AX_MAC_ADDR_2);
-    m_macAddr.bytes[3] = m_mmio.read8(R_AX_MAC_ADDR_3);
-    m_macAddr.bytes[4] = m_mmio.read8(R_AX_MAC_ADDR_4);
-    m_macAddr.bytes[5] = m_mmio.read8(R_AX_MAC_ADDR_5);
+    bool valid = false;
+    if (m_mmioBase != nullptr && reinterpret_cast<uintptr_t>(m_mmioBase) >= 0xFFFF800000000000ULL) {
+        m_macAddr.bytes[0] = m_mmio.read8(R_AX_MAC_ADDR_0);
+        m_macAddr.bytes[1] = m_mmio.read8(R_AX_MAC_ADDR_1);
+        m_macAddr.bytes[2] = m_mmio.read8(R_AX_MAC_ADDR_2);
+        m_macAddr.bytes[3] = m_mmio.read8(R_AX_MAC_ADDR_3);
+        m_macAddr.bytes[4] = m_mmio.read8(R_AX_MAC_ADDR_4);
+        m_macAddr.bytes[5] = m_mmio.read8(R_AX_MAC_ADDR_5);
 
-    if (m_macAddr.bytes[0] == 0x00 && m_macAddr.bytes[1] == 0x00 && m_macAddr.bytes[2] == 0x00) {
-        m_macAddr.bytes[0] = 0x00;
+        bool all_zero = true;
+        bool all_ff = true;
+        for (int i = 0; i < 6; ++i) {
+            if (m_macAddr.bytes[i] != 0x00) all_zero = false;
+            if (m_macAddr.bytes[i] != 0xFF) all_ff = false;
+        }
+        if (!all_zero && !all_ff && (m_macAddr.bytes[0] & 1) == 0) {
+            valid = true;
+        }
+    }
+
+    if (!valid) {
+        // Fallback to locally administered Realtek MAC address
+        m_macAddr.bytes[0] = 0x02;
         m_macAddr.bytes[1] = 0xE0;
         m_macAddr.bytes[2] = 0x4C;
         m_macAddr.bytes[3] = 0x88;
         m_macAddr.bytes[4] = 0x52;
         m_macAddr.bytes[5] = 0xBE;
     }
+
+    IOLog("Rtl89Driver: MAC address %02x:%02x:%02x:%02x:%02x:%02x\n",
+          m_macAddr.bytes[0], m_macAddr.bytes[1], m_macAddr.bytes[2],
+          m_macAddr.bytes[3], m_macAddr.bytes[4], m_macAddr.bytes[5]);
 }
 
 bool Rtl89Driver::createMediumTables() {
