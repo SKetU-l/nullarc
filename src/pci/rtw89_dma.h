@@ -6,8 +6,13 @@
 
 #include "linux_shim.h"
 
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+#include <stddef.h>
+#include <stdint.h>
+#else
 #include <cstddef>
 #include <cstdint>
+#endif
 
 #define RTW89_DMA_DEFAULT_MASK          0xFFFFFFFFULL   // 32-bit physical DMA mask
 #define RTW89_DMA_ALIGNMENT             128             // 128-byte cache line alignment

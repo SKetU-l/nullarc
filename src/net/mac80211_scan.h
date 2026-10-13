@@ -6,8 +6,13 @@
 #include "linux_shim.h"
 #include "mac80211_frame.h"
 
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+#include <stddef.h>
+#include <stdint.h>
+#else
 #include <cstddef>
 #include <cstdint>
+#endif
 
 // Cipher Suites (OUI 00:0F:AC)
 #define WLAN_CIPHER_SUITE_NONE          0

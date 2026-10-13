@@ -3,8 +3,13 @@
 //
 #include "rtw89_tx.h"
 
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+#include <sys/errno.h>
+#include <string.h>
+#else
 #include <cerrno>
 #include <cstring>
+#endif
 
 int rtw89_tx_parse_mbuf(rtw89_mbuf_t m, rtw89_tx_pkt_info *info) {
     if (!m || !info) {
@@ -21,7 +26,8 @@ int rtw89_tx_parse_mbuf(rtw89_mbuf_t m, rtw89_tx_pkt_info *info) {
         size_t len = mbuf_len(cur);
         uint8_t *data = static_cast<uint8_t *>(mbuf_data(cur));
         if (copied_hdr < RTW89_ETHER_HDR_LEN && len > 0) {
-            size_t to_copy = std::min(len, RTW89_ETHER_HDR_LEN - copied_hdr);
+            size_t rem = RTW89_ETHER_HDR_LEN - copied_hdr;
+            size_t to_copy = (len < rem) ? len : rem;
             memcpy(hdr_bytes + copied_hdr, data, to_copy);
             copied_hdr += to_copy;
         }
@@ -33,7 +39,8 @@ int rtw89_tx_parse_mbuf(rtw89_mbuf_t m, rtw89_tx_pkt_info *info) {
         size_t len = cur->m_len;
         uint8_t *data = cur->m_data;
         if (copied_hdr < RTW89_ETHER_HDR_LEN && len > 0 && data) {
-            size_t to_copy = std::min(len, RTW89_ETHER_HDR_LEN - copied_hdr);
+            size_t rem = RTW89_ETHER_HDR_LEN - copied_hdr;
+            size_t to_copy = (len < rem) ? len : rem;
             memcpy(hdr_bytes + copied_hdr, data, to_copy);
             copied_hdr += to_copy;
         }

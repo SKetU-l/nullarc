@@ -9,9 +9,14 @@
 #include "rtw8852be_reg.h"
 #include "rtw8852be_mmio.h"
 
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+#include <stddef.h>
+#include <stdint.h>
+#else
 #include <cstddef>
 #include <cstdint>
 #include <vector>
+#endif
 
 #define RTW89_TX_RING_DEFAULT_SIZE      256
 #define RTW89_RX_RING_DEFAULT_SIZE      512
@@ -43,8 +48,13 @@ struct rtw89_tx_ring {
     uint32_t dma_idx_reg{0};            // Hardware index register offset
 
     rtw89_dma_buf bd_ring{};            // Contiguous DMA buffer for descriptors
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+    struct sk_buff *skbs[RTW89_TX_RING_DEFAULT_SIZE]{}; // Associated packet buffers
+    uint64_t dma_addrs[RTW89_TX_RING_DEFAULT_SIZE]{};    // Associated packet DMA addresses
+#else
     std::vector<struct sk_buff *> skbs; // Associated packet buffers
     std::vector<uint64_t> dma_addrs;    // Associated packet DMA addresses
+#endif
 
     inline size_t count() const {
         return wp - rp;
@@ -74,8 +84,13 @@ struct rtw89_rx_ring {
     size_t buf_sz{RTW89_RX_BUF_SIZE};
 
     rtw89_dma_buf bd_ring{};            // Contiguous DMA buffer for descriptors
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+    struct sk_buff *skbs[RTW89_RX_RING_DEFAULT_SIZE]{}; // Associated packet buffers
+    uint64_t dma_addrs[RTW89_RX_RING_DEFAULT_SIZE]{};
+#else
     std::vector<struct sk_buff *> skbs; // Associated packet buffers
     std::vector<uint64_t> dma_addrs;
+#endif
 
     inline size_t count() const {
         return wp - rp;

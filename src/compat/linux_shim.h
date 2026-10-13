@@ -4,14 +4,55 @@
 //
 #pragma once
 
-#include <cstdint>
-#include <cstddef>
-#include <cstring>
-
 #if defined(KERNEL) || defined(__APPLE_KEXT__)
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+#include <sys/errno.h>
+#include <IOKit/IOLib.h>
 #include <IOKit/IOLocks.h>
+
+#ifdef min
+#undef min
+#endif
+#ifdef max
+#undef max
+#endif
+
+namespace std {
+    template <typename T>
+    constexpr const T& min(const T& a, const T& b) {
+        return (b < a) ? b : a;
+    }
+    template <typename T>
+    constexpr const T& max(const T& a, const T& b) {
+        return (a < b) ? b : a;
+    }
+
+    using memory_order = int;
+    constexpr int memory_order_relaxed = 0;
+    constexpr int memory_order_acquire = 1;
+    constexpr int memory_order_release = 2;
+    constexpr int memory_order_seq_cst = 3;
+
+    template <typename T>
+    struct atomic {
+        volatile T val;
+        constexpr atomic(T v = 0) : val(v) {}
+        T load(int = 0) const { return __atomic_load_n(&val, __ATOMIC_SEQ_CST); }
+        void store(T v, int = 0) { __atomic_store_n(&val, v, __ATOMIC_SEQ_CST); }
+        T fetch_add(T v, int = 0) { return __atomic_fetch_add(&val, v, __ATOMIC_SEQ_CST); }
+        T fetch_sub(T v, int = 0) { return __atomic_fetch_sub(&val, v, __ATOMIC_SEQ_CST); }
+    };
+}
 #else
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+#include <errno.h>
 #include <pthread.h>
+#include <algorithm>
+#include <atomic>
 #endif
 
 // ============================================================================
@@ -391,6 +432,13 @@ static inline void mutex_destroy(mutex_t *lock) {
 
 #ifndef unlikely
 #define unlikely(x) __builtin_expect(!!(x), 0)
+#endif
+
+#ifdef min
+#undef min
+#endif
+#ifdef max
+#undef max
 #endif
 
 template <typename T>

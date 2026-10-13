@@ -3,8 +3,10 @@
 //
 #include "rtw8852be_pci.h"
 
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
 #include <chrono>
 #include <thread>
+#endif
 
 // ============================================================================
 // 1. Initialization
@@ -257,7 +259,11 @@ int rtw89_pci_set_power_state(Rtw89Mmio &mmio, rtw89_pci_info &pci, rtw89_power_
 
         // 7. Settling delay sequence for clock gating and power down
         if (pci.transition_delay_us > 0) {
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
             std::this_thread::sleep_for(std::chrono::microseconds(pci.transition_delay_us));
+#else
+            IODelay(pci.transition_delay_us);
+#endif
         }
 
         Rtw89Mmio::mb();
@@ -268,7 +274,11 @@ int rtw89_pci_set_power_state(Rtw89Mmio &mmio, rtw89_pci_info &pci, rtw89_power_
         // Transition D3hot -> D0
         // 1. Power rail stabilization delay sequence
         if (pci.transition_delay_us > 0) {
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
             std::this_thread::sleep_for(std::chrono::microseconds(pci.transition_delay_us));
+#else
+            IODelay(pci.transition_delay_us);
+#endif
         }
 
         // 2. Unlock RSV_CTRL and restore normal PERST connection
@@ -294,7 +304,11 @@ int rtw89_pci_set_power_state(Rtw89Mmio &mmio, rtw89_pci_info &pci, rtw89_power_
 
         // 7. Settling delay sequence for clock & PLL stabilization
         if (pci.transition_delay_us > 0) {
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
             std::this_thread::sleep_for(std::chrono::microseconds(pci.transition_delay_us));
+#else
+            IODelay(pci.transition_delay_us);
+#endif
         }
 
         // 8. Restore preserved registers across power transition

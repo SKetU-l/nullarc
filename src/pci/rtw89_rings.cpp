@@ -3,8 +3,10 @@
 //
 #include "rtw89_rings.h"
 
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
 #include <algorithm>
 #include <cerrno>
+#endif
 
 uint32_t rtw89_pci_get_tx_idx_reg(uint8_t ch) {
     switch (ch) {
@@ -66,8 +68,16 @@ int rtw89_pci_init_tx_ring(Rtw89Mmio *mmio, rtw89_tx_ring *ring, uint8_t ch, siz
         return ret;
     }
 
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+    if (count > RTW89_TX_RING_DEFAULT_SIZE) count = RTW89_TX_RING_DEFAULT_SIZE;
+    for (size_t i = 0; i < count; ++i) {
+        ring->skbs[i] = nullptr;
+        ring->dma_addrs[i] = 0;
+    }
+#else
     ring->skbs.assign(count, nullptr);
     ring->dma_addrs.assign(count, 0);
+#endif
 
     // Initialize hardware ring pointer to 0
     if (mmio) {
@@ -83,15 +93,17 @@ void rtw89_pci_free_tx_ring(rtw89_tx_ring *ring) {
     }
 
     // Free any pending skbs
-    for (size_t i = 0; i < ring->skbs.size(); ++i) {
+    for (size_t i = 0; i < ring->size; ++i) {
         if (ring->skbs[i]) {
             dev_kfree_skb_any(ring->skbs[i]);
             ring->skbs[i] = nullptr;
         }
     }
 
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
     ring->skbs.clear();
     ring->dma_addrs.clear();
+#endif
 
     rtw89_dma_free(&ring->bd_ring);
     ring->wp = 0;
@@ -201,8 +213,16 @@ int rtw89_pci_init_rx_ring(Rtw89Mmio *mmio, rtw89_rx_ring *ring, uint8_t ch, siz
         return ret;
     }
 
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+    if (count > RTW89_RX_RING_DEFAULT_SIZE) count = RTW89_RX_RING_DEFAULT_SIZE;
+    for (size_t i = 0; i < count; ++i) {
+        ring->skbs[i] = nullptr;
+        ring->dma_addrs[i] = 0;
+    }
+#else
     ring->skbs.assign(count, nullptr);
     ring->dma_addrs.assign(count, 0);
+#endif
 
     // Pre-populate descriptors with sk_buffs
     ret = rtw89_pci_rx_refill(mmio, ring);
@@ -219,15 +239,17 @@ void rtw89_pci_free_rx_ring(rtw89_rx_ring *ring) {
         return;
     }
 
-    for (size_t i = 0; i < ring->skbs.size(); ++i) {
+    for (size_t i = 0; i < ring->size; ++i) {
         if (ring->skbs[i]) {
             dev_kfree_skb_any(ring->skbs[i]);
             ring->skbs[i] = nullptr;
         }
     }
 
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
     ring->skbs.clear();
     ring->dma_addrs.clear();
+#endif
 
     rtw89_dma_free(&ring->bd_ring);
     ring->wp = 0;

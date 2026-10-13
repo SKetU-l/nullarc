@@ -10,11 +10,17 @@
 #include "rtw8852be_mmio.h"
 #include "rtw8852b_fw_bin.h"
 
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+#include <stdint.h>
+#include <stddef.h>
+#include <string.h>
+#else
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <functional>
 #include <vector>
+#endif
 
 // ============================================================================
 // 1. MFW Directory & Firmware Binary Definitions
@@ -250,11 +256,15 @@ struct rtw89_dev {
     unsigned long flags[2]{0, 0};
     uint8_t cv{2};
 
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
     // Callback hook for custom H2C transmit handling if set
     std::function<int(struct rtw89_dev *dev, struct sk_buff *skb, bool fwdl)> h2c_tx_fn;
 
     // Transmitted packet history for inspection and unit testing
     std::vector<std::vector<uint8_t>> tx_history;
+#else
+    int (*h2c_tx_fn)(struct rtw89_dev *dev, struct sk_buff *skb, bool fwdl){nullptr};
+#endif
 };
 
 // ============================================================================

@@ -3,8 +3,13 @@
 //
 #include "mac80211_scan.h"
 
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+#include <sys/errno.h>
+#include <string.h>
+#else
 #include <cerrno>
 #include <cstring>
+#endif
 
 // OUI prefixes for 802.11i / WPA2
 static const uint8_t WPA2_OUI[3] = {0x00, 0x0F, 0xAC};

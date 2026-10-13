@@ -411,3 +411,11 @@ enum rtw89_fwdl_status_code {
 
 #define R_AX_SYS_CFG1                   0x00F0
 #define B_AX_CHIP_VER_MASK              GENMASK(15, 12)
+
+// MAC Address Registers
+#define R_AX_MAC_ADDR_0                 0x0040
+#define R_AX_MAC_ADDR_1                 0x0041
+#define R_AX_MAC_ADDR_2                 0x0042
+#define R_AX_MAC_ADDR_3                 0x0043
+#define R_AX_MAC_ADDR_4                 0x0044
+#define R_AX_MAC_ADDR_5                 0x0045

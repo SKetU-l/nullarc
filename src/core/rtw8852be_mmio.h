@@ -7,6 +7,12 @@
 #include "linux_shim.h"
 #include "rtw8852be_reg.h"
 
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+#include <stdint.h>
+#include <stddef.h>
+#include <sys/errno.h>
+#include <IOKit/IOLib.h>
+#else
 #include <atomic>
 #include <cerrno>
 #include <chrono>
@@ -18,6 +24,7 @@
 #include <type_traits>
 #include <unordered_map>
 #include <vector>
+#endif
 
 // Undefine preprocessor function-like macros for memory barriers so they can be
 // provided cleanly as both global C++ inline functions and class methods.
@@ -69,6 +76,7 @@ public:
     virtual int poll_timeout_atomic(uint32_t addr, uint64_t mask, uint64_t target_val,
                                     uint32_t timeout_us, uint32_t sleep_us = 1);
 
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
     // Template predicate polling (e.g. lambda [](uint32_t val) -> bool)
     template <typename Predicate,
               typename = std::enable_if_t<std::is_invocable_r_v<bool, Predicate, uint32_t>>>
@@ -99,6 +107,7 @@ public:
             }
         }
     }
+#endif
 
     // Synchronous memory barriers
     static inline void mb()  { ::mb(); }
@@ -106,9 +115,12 @@ public:
     static inline void wmb() { ::wmb(); }
 
 protected:
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
     mutable std::mutex rmw_mutex_;
+#endif
 };
 
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
 // ============================================================================
 // 2. Mock MMIO Bus Implementation: MockMmioBus
 // ============================================================================
@@ -170,6 +182,7 @@ private:
     std::unordered_map<uint32_t, ReadHandler> read_handlers_;
     std::unordered_map<uint32_t, WriteHandler> write_handlers_;
 };
+#endif
 
 // ============================================================================
 // 3. Direct Memory-Mapped Bus Implementation: DirectMmioBus

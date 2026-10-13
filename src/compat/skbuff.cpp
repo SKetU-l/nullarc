@@ -3,8 +3,20 @@
 // For rtw89 driver on macOS / freestanding C++17 environments
 //
 #include "skbuff.h"
+
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+#include <IOKit/IOLib.h>
+#include <string.h>
+static inline void *skb_mem_alloc(size_t sz) { return IOMalloc(sz); }
+static inline void *skb_mem_calloc(size_t sz) { return IOMallocZero(sz); }
+static inline void skb_mem_free(void *ptr, size_t sz) { if (ptr) IOFree(ptr, sz); }
+#else
 #include <cstdlib>
 #include <cstring>
+static inline void *skb_mem_alloc(size_t sz) { return std::malloc(sz); }
+static inline void *skb_mem_calloc(size_t sz) { return std::calloc(1, sz); }
+static inline void skb_mem_free(void *ptr, size_t) { std::free(ptr); }
+#endif
 
 #define NET_SKB_PAD 64
 
@@ -16,16 +28,16 @@ struct alignas(16) skb_data_block {
 struct sk_buff *alloc_skb(unsigned int size, gfp_t gfp) {
     (void)gfp;
     size_t alloc_bytes = sizeof(struct skb_data_block) + size;
-    auto *block = static_cast<struct skb_data_block *>(std::malloc(alloc_bytes));
+    auto *block = static_cast<struct skb_data_block *>(skb_mem_alloc(alloc_bytes));
     if (!block)
         return nullptr;
 
     atomic_set(&block->dataref, 1);
     block->capacity = size;
 
-    auto *skb = static_cast<struct sk_buff *>(std::calloc(1, sizeof(struct sk_buff)));
+    auto *skb = static_cast<struct sk_buff *>(skb_mem_calloc(sizeof(struct sk_buff)));
     if (!skb) {
-        std::free(block);
+        skb_mem_free(block, alloc_bytes);
         return nullptr;
     }
 
@@ -61,11 +73,12 @@ void kfree_skb(struct sk_buff *skb) {
     if (atomic_dec_and_test(&skb->users)) {
         if (skb->dataref && atomic_dec_and_test(skb->dataref)) {
             if (skb->data_block) {
-                std::free(skb->data_block);
+                size_t bsz = sizeof(struct skb_data_block) + skb->data_block->capacity;
+                skb_mem_free(skb->data_block, bsz);
                 skb->data_block = nullptr;
             }
         }
-        std::free(skb);
+        skb_mem_free(skb, sizeof(struct sk_buff));
     }
 }
 
@@ -111,7 +124,7 @@ void *skb_put_data(struct sk_buff *skb, const void *data, unsigned int len) {
     unsigned char *dest = skb_put(skb, len);
     if (!dest)
         return nullptr;
-    std::memcpy(dest, data, len);
+    memcpy(dest, data, len);
     return dest;
 }
 
@@ -139,7 +152,7 @@ struct sk_buff *skb_clone(struct sk_buff *skb, gfp_t gfp) {
     (void)gfp;
     if (!skb)
         return nullptr;
-    auto *clone = static_cast<struct sk_buff *>(std::calloc(1, sizeof(struct sk_buff)));
+    auto *clone = static_cast<struct sk_buff *>(skb_mem_calloc(sizeof(struct sk_buff)));
     if (!clone)
         return nullptr;
     *clone = *skb;
@@ -175,6 +188,6 @@ struct sk_buff *skb_copy(const struct sk_buff *skb, gfp_t gfp) {
     copy->priority = skb->priority;
     copy->data_len = skb->data_len;
     copy->truesize = skb->truesize;
-    std::memcpy(copy->cb, skb->cb, sizeof(copy->cb));
+    memcpy(copy->cb, skb->cb, sizeof(copy->cb));
     return copy;
 }

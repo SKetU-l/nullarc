@@ -1,3 +1,4 @@
+reference
 reference/
 build/
 *.o
@@ -20,6 +21,12 @@ tests/test_rtw89_dma
 tests/test_rtw89_rings
 tests/test_rtw89_interrupt
 tests/test_rtw89_tx
+tests/test_rtw89_frame
+tests/test_rtw89_scan
+tests/test_rtw89_assoc
+tests/test_rtw89_wpa2
+tests/test_rtw89_lifecycle
 tests/fixtures/
 __pycache__/
 *.pyc
+

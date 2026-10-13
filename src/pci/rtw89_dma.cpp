@@ -3,13 +3,14 @@
 //
 #include "rtw89_dma.h"
 
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+#include <sys/errno.h>
+#include <string.h>
+#include <IOKit/IOBufferMemoryDescriptor.h>
+#else
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
-
-#if defined(KERNEL) && defined(__APPLE__)
-// In macOS Kernel context, use IOKit IOBufferMemoryDescriptor
-#include <IOKit/IOBufferMemoryDescriptor.h>
 #endif
 
 bool rtw89_dma_verify_32bit_mask(uint64_t paddr, uint64_t mask) {

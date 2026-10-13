@@ -9,9 +9,13 @@
 #include "rtw8852be_mmio.h"
 #include "rtw89_rings.h"
 
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+#include <stdint.h>
+#else
 #include <atomic>
 #include <cstdint>
 #include <functional>
+#endif
 
 #define RTW89_IRQ_RX_BITS       (B_AX_HD0ISR_IND_INT_EN | B_AX_HD1ISR_IND_INT_EN)
 #define RTW89_IRQ_TX_BITS       (B_AX_TXDMA_CH12_INT_EN | B_AX_TXDMA_CH9_INT_EN)
@@ -32,7 +36,12 @@ struct rtw89_irq_info {
     std::atomic<uint64_t> tx_event_count{0};
 
     // Callback invoked when top-half signals bottom-half work is needed
+#if !defined(KERNEL) && !defined(__APPLE_KEXT__)
     std::function<void()> bottom_half_trigger{nullptr};
+#else
+    void (*bottom_half_trigger)(void *ctx){nullptr};
+    void *bottom_half_ctx{nullptr};
+#endif
 };
 
 // ============================================================================

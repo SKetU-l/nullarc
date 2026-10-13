@@ -3,8 +3,13 @@
 //
 #include "wpa2_psk.h"
 
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+#include <sys/errno.h>
+#include <string.h>
+#else
 #include <cerrno>
 #include <cstring>
+#endif
 
 Wpa2HandshakeEngine::Wpa2HandshakeEngine()
     : m_state(HandshakeState::IDLE) {

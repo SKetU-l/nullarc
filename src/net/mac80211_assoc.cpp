@@ -3,8 +3,13 @@
 //
 #include "mac80211_assoc.h"
 
+#if defined(KERNEL) || defined(__APPLE_KEXT__)
+#include <sys/errno.h>
+#include <string.h>
+#else
 #include <cerrno>
 #include <cstring>
+#endif
 
 AssocStateMachine::AssocStateMachine()
     : m_state(AssocState::IDLE),
