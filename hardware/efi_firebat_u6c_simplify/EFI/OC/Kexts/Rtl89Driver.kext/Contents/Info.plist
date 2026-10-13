@@ -38,6 +38,10 @@
 			<string>IOPCIDevice</string>
 			<key>IOUserClientClass</key>
 			<string>Rtl89UserClient</string>
+			<key>AutoJoinSSID</key>
+			<string></string>
+			<key>AutoJoinPassword</key>
+			<string></string>
 		</dict>
 	</dict>
 	<key>OSBundleLibraries</key>
