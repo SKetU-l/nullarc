@@ -27,6 +27,6 @@ tests/test_rtw89_assoc
 tests/test_rtw89_wpa2
 tests/test_rtw89_lifecycle
 tests/fixtures/
-__pycache__/
-*.pyc
+
+.slim/deepwork/
 
