@@ -95,6 +95,94 @@
 						BQAAAA==
 						</data>
 					</dict>
+					<key>HUB1</key>
+					<dict>
+						<key>UsbConnector</key>
+						<integer>255</integer>
+						<key>comment</key>
+						<string>Internal USB 2.0 Hub 34d1:0608 (ACPI HUB1)</string>
+						<key>port</key>
+						<data>
+						BAAAAA==
+						</data>
+					</dict>
+					<key>PRT1</key>
+					<dict>
+						<key>UsbConnector</key>
+						<integer>3</integer>
+						<key>comment</key>
+						<string>Type-A USB 2.0 companion 1 (ACPI PRT1)</string>
+						<key>port</key>
+						<data>
+						AQAAAA==
+						</data>
+					</dict>
+					<key>PRT2</key>
+					<dict>
+						<key>UsbConnector</key>
+						<integer>3</integer>
+						<key>comment</key>
+						<string>Type-A USB 2.0 companion 2 (WiFi TL-WN725N) (ACPI PRT2)</string>
+						<key>port</key>
+						<data>
+						AgAAAA==
+						</data>
+					</dict>
+					<key>PRT3</key>
+					<dict>
+						<key>UsbConnector</key>
+						<integer>0</integer>
+						<key>comment</key>
+						<string>Type-A USB 2.0 only (ACPI PRT3)</string>
+						<key>port</key>
+						<data>
+						AwAAAA==
+						</data>
+					</dict>
+					<key>PRT4</key>
+					<dict>
+						<key>UsbConnector</key>
+						<integer>255</integer>
+						<key>comment</key>
+						<string>Internal USB 2.0 Hub alternate (ACPI PRT4)</string>
+						<key>port</key>
+						<data>
+						BAAAAA==
+						</data>
+					</dict>
+					<key>PRT5</key>
+					<dict>
+						<key>UsbConnector</key>
+						<integer>255</integer>
+						<key>comment</key>
+						<string>Internal Bluetooth Radio 0bda:b85b (ACPI PRT5)</string>
+						<key>port</key>
+						<data>
+						BQAAAA==
+						</data>
+					</dict>
+					<key>PRT6</key>
+					<dict>
+						<key>UsbConnector</key>
+						<integer>3</integer>
+						<key>comment</key>
+						<string>Type-A USB 3.0 SuperSpeed 1 (ACPI PRT6)</string>
+						<key>port</key>
+						<data>
+						BgAAAA==
+						</data>
+					</dict>
+					<key>PRT7</key>
+					<dict>
+						<key>UsbConnector</key>
+						<integer>3</integer>
+						<key>comment</key>
+						<string>Type-A USB 3.0 SuperSpeed 2 (ACPI PRT7)</string>
+						<key>port</key>
+						<data>
+						BwAAAA==
+						</data>
+					</dict>
 					<key>SS01</key>
 					<dict>
 						<key>UsbConnector</key>
@@ -191,6 +279,94 @@
 						BQAAAA==
 						</data>
 					</dict>
+					<key>HUB1</key>
+					<dict>
+						<key>UsbConnector</key>
+						<integer>255</integer>
+						<key>comment</key>
+						<string>Internal USB 2.0 Hub 34d1:0608 (ACPI HUB1)</string>
+						<key>port</key>
+						<data>
+						BAAAAA==
+						</data>
+					</dict>
+					<key>PRT1</key>
+					<dict>
+						<key>UsbConnector</key>
+						<integer>3</integer>
+						<key>comment</key>
+						<string>Type-A USB 2.0 companion 1 (ACPI PRT1)</string>
+						<key>port</key>
+						<data>
+						AQAAAA==
+						</data>
+					</dict>
+					<key>PRT2</key>
+					<dict>
+						<key>UsbConnector</key>
+						<integer>3</integer>
+						<key>comment</key>
+						<string>Type-A USB 2.0 companion 2 (WiFi TL-WN725N) (ACPI PRT2)</string>
+						<key>port</key>
+						<data>
+						AgAAAA==
+						</data>
+					</dict>
+					<key>PRT3</key>
+					<dict>
+						<key>UsbConnector</key>
+						<integer>0</integer>
+						<key>comment</key>
+						<string>Type-A USB 2.0 only (ACPI PRT3)</string>
+						<key>port</key>
+						<data>
+						AwAAAA==
+						</data>
+					</dict>
+					<key>PRT4</key>
+					<dict>
+						<key>UsbConnector</key>
+						<integer>255</integer>
+						<key>comment</key>
+						<string>Internal USB 2.0 Hub alternate (ACPI PRT4)</string>
+						<key>port</key>
+						<data>
+						BAAAAA==
+						</data>
+					</dict>
+					<key>PRT5</key>
+					<dict>
+						<key>UsbConnector</key>
+						<integer>255</integer>
+						<key>comment</key>
+						<string>Internal Bluetooth Radio 0bda:b85b (ACPI PRT5)</string>
+						<key>port</key>
+						<data>
+						BQAAAA==
+						</data>
+					</dict>
+					<key>PRT6</key>
+					<dict>
+						<key>UsbConnector</key>
+						<integer>3</integer>
+						<key>comment</key>
+						<string>Type-A USB 3.0 SuperSpeed 1 (ACPI PRT6)</string>
+						<key>port</key>
+						<data>
+						BgAAAA==
+						</data>
+					</dict>
+					<key>PRT7</key>
+					<dict>
+						<key>UsbConnector</key>
+						<integer>3</integer>
+						<key>comment</key>
+						<string>Type-A USB 3.0 SuperSpeed 2 (ACPI PRT7)</string>
+						<key>port</key>
+						<data>
+						BwAAAA==
+						</data>
+					</dict>
 					<key>SS01</key>
 					<dict>
 						<key>UsbConnector</key>
@@ -275,6 +451,94 @@
 						<key>port</key>
 						<data>
 						BQAAAA==
+						</data>
+					</dict>
+					<key>HUB1</key>
+					<dict>
+						<key>UsbConnector</key>
+						<integer>255</integer>
+						<key>comment</key>
+						<string>Internal USB 2.0 Hub 34d1:0608 (ACPI HUB1)</string>
+						<key>port</key>
+						<data>
+						BAAAAA==
+						</data>
+					</dict>
+					<key>PRT1</key>
+					<dict>
+						<key>UsbConnector</key>
+						<integer>3</integer>
+						<key>comment</key>
+						<string>Type-A USB 2.0 companion 1 (ACPI PRT1)</string>
+						<key>port</key>
+						<data>
+						AQAAAA==
+						</data>
+					</dict>
+					<key>PRT2</key>
+					<dict>
+						<key>UsbConnector</key>
+						<integer>3</integer>
+						<key>comment</key>
+						<string>Type-A USB 2.0 companion 2 (WiFi TL-WN725N) (ACPI PRT2)</string>
+						<key>port</key>
+						<data>
+						AgAAAA==
+						</data>
+					</dict>
+					<key>PRT3</key>
+					<dict>
+						<key>UsbConnector</key>
+						<integer>0</integer>
+						<key>comment</key>
+						<string>Type-A USB 2.0 only (ACPI PRT3)</string>
+						<key>port</key>
+						<data>
+						AwAAAA==
+						</data>
+					</dict>
+					<key>PRT4</key>
+					<dict>
+						<key>UsbConnector</key>
+						<integer>255</integer>
+						<key>comment</key>
+						<string>Internal USB 2.0 Hub alternate (ACPI PRT4)</string>
+						<key>port</key>
+						<data>
+						BAAAAA==
+						</data>
+					</dict>
+					<key>PRT5</key>
+					<dict>
+						<key>UsbConnector</key>
+						<integer>255</integer>
+						<key>comment</key>
+						<string>Internal Bluetooth Radio 0bda:b85b (ACPI PRT5)</string>
+						<key>port</key>
+						<data>
+						BQAAAA==
+						</data>
+					</dict>
+					<key>PRT6</key>
+					<dict>
+						<key>UsbConnector</key>
+						<integer>3</integer>
+						<key>comment</key>
+						<string>Type-A USB 3.0 SuperSpeed 1 (ACPI PRT6)</string>
+						<key>port</key>
+						<data>
+						BgAAAA==
+						</data>
+					</dict>
+					<key>PRT7</key>
+					<dict>
+						<key>UsbConnector</key>
+						<integer>3</integer>
+						<key>comment</key>
+						<string>Type-A USB 3.0 SuperSpeed 2 (ACPI PRT7)</string>
+						<key>port</key>
+						<data>
+						BwAAAA==
 						</data>
 					</dict>
 					<key>SS01</key>
