@@ -43,7 +43,7 @@ DefinitionBlock ("", "SSDT", 2, "ZPSS", "RMNE", 0x00001000)
                 "built-in", 
                 Buffer (One)
                 {
-                     0x00                                             // .
+                     0x01                                             // .
                 }, 
 
                 "IOName", 
