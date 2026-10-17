@@ -50,7 +50,7 @@
 				<key>Comment</key>
 				<string>SSDT-USB-Reset.aml</string>
 				<key>Enabled</key>
-				<false/>
+				<true/>
 				<key>Path</key>
 				<string>SSDT-USB-Reset.aml</string>
 			</dict>
@@ -342,7 +342,7 @@
 				<key>Comment</key>
 				<string>Native AMD RDNA 3 (Radeon 780M / GFX1103) Graphics Driver</string>
 				<key>Enabled</key>
-				<true/>
+				<false/>
 				<key>ExecutablePath</key>
 				<string>Contents/MacOS/RDNA3Driver</string>
 				<key>MaxKernel</key>
@@ -2097,7 +2097,7 @@
 				AAAAAAAAAAAAAAAAAAA=
 				</data>
 				<key>boot-args</key>
-				<string>-v debug=0x100 keepsyms=1 -vi2c-force-polling -FIPeriodic revpatch=cpuname,sbvmm agdpmod=pikera msgbuf=1048576 ipc_control_port_options=0 amfi=0x80</string>
+				<string>-v debug=0x100 keepsyms=1 -vi2c-force-polling -FIPeriodic revpatch=cpuname,sbvmm agdpmod=pikera msgbuf=1048576 ipc_control_port_options=0 amfi=0x80 utbwait=10</string>
 				<key>csr-active-config</key>
 				<data>
 				fwgAAA==
