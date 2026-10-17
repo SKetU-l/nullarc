@@ -348,6 +348,7 @@ def build_kext():
 #include "amd/rdna3_ip_discovery.cpp"
 #include "amd/rdna3_rebar_uma.cpp"
 #include "amd/rdna3_ip_blocks.cpp"
+#include "kext/RDNA3Framebuffer.cpp"
 #include "kext/RDNA3UserClient.cpp"
 #include "kext/RDNA3Driver.cpp"
 extern "C" {

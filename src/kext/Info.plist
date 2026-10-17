@@ -42,6 +42,8 @@
 	<string>Copyright © 2026 Dripside / Antigravity. All rights reserved.</string>
 	<key>OSBundleLibraries</key>
 	<dict>
+		<key>com.apple.iokit.IOGraphicsFamily</key>
+		<string>1.1</string>
 		<key>com.apple.iokit.IOPCIFamily</key>
 		<string>1.0</string>
 		<key>com.apple.kpi.bsd</key>

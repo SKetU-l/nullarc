@@ -4,7 +4,7 @@
 //
 #pragma once
 
-#include <IOKit/IOService.h>
+#include <IOKit/graphics/IOAccelerator.h>
 #include <IOKit/pci/IOPCIDevice.h>
 #include <IOKit/IOMemoryDescriptor.h>
 #include <IOKit/IOUserClient.h>
@@ -14,9 +14,11 @@
 #include "amd/rdna3_rebar_uma.h"
 #include "uapi/r3n_native_abi.h"
 
-class RDNA3Driver : public IOService {
+class RDNA3Framebuffer;
+
+class RDNA3Driver : public IOAccelerator {
     OSDeclareDefaultStructors(RDNA3Driver)
-    using super = IOService;
+    using super = IOAccelerator;
 
 private:
     IOPCIDevice        *m_pciDevice{nullptr};
@@ -55,6 +57,9 @@ private:
     rdna3::DeviceContext m_devCtx{};
     rdna3::DisplayTimings m_activeTimings{};
     bool                m_scanoutActive{false};
+    bool                m_ipBringupActive{false};
+
+    RDNA3Framebuffer   *m_framebuffer{nullptr};
 
 public:
     bool init(OSDictionary *propTable = nullptr) override;
@@ -66,7 +71,7 @@ public:
     IOReturn newUserClient(task_t owningTask, void *securityID, UInt32 type,
                            OSDictionary *properties, IOUserClient **handler) override;
 
-    // Device accessors for UserClient
+    // Device accessors for UserClient and Framebuffer
     IOPCIDevice *getPCIDevice() const { return m_pciDevice; }
     uint8_t *getMmioBase() const { return m_mmioVirtualBase; }
     uint64_t getMmioSize() const { return m_mmioSize; }
@@ -74,4 +79,6 @@ public:
     uint64_t getVramSize() const { return m_vramSize; }
     const rdna3::DisplayTimings &getActiveTimings() const { return m_activeTimings; }
     bool isScanoutActive() const { return m_scanoutActive; }
+    bool isIpBringupActive() const { return m_ipBringupActive; }
+    RDNA3Framebuffer *getFramebuffer() const { return m_framebuffer; }
 };
