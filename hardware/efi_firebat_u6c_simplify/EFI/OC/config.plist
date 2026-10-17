@@ -2115,7 +2115,7 @@
 				AAAAAAAAAAAAAAAAAAA=
 				</data>
 				<key>boot-args</key>
-				<string>-v debug=0x100 keepsyms=1 -vi2c-force-polling -FIPeriodic revpatch=cpuname,sbvmm agdpmod=pikera msgbuf=1048576 ipc_control_port_options=0 amfi=0x80</string>
+				<string>-v debug=0x100 keepsyms=1 -vi2c-force-polling -FIPeriodic revpatch=cpuname,sbvmm agdpmod=pikera msgbuf=1048576 ipc_control_port_options=0 amfi=0x80 amfi_get_out_of_my_way=1</string>
 				<key>csr-active-config</key>
 				<data>
 				fwgAAA==
