@@ -5,9 +5,9 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>English</string>
 	<key>CFBundleGetInfoString</key>
-	<string>v1.0 Firebat U6C USB Map</string>
+	<string>v1.1</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.drip.UTBMap</string>
+	<string>com.dhinakg.USBToolBox.map</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
@@ -15,11 +15,11 @@
 	<key>CFBundlePackageType</key>
 	<string>KEXT</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
+	<string>1.1</string>
 	<key>CFBundleSignature</key>
 	<string>????</string>
 	<key>CFBundleVersion</key>
-	<string>1.0</string>
+	<string>1.1</string>
 	<key>IOKitPersonalities</key>
 	<dict>
 		<key>XHC0</key>
@@ -38,14 +38,12 @@
 			<dict>
 				<key>port-count</key>
 				<data>
-				CAAAAA==
+				BwAAAA==
 				</data>
 				<key>ports</key>
 				<dict>
 					<key>HS01</key>
 					<dict>
-						<key>#comment</key>
-						<string>USB-A 2.0 Port 1</string>
 						<key>UsbConnector</key>
 						<integer>3</integer>
 						<key>port</key>
@@ -55,8 +53,6 @@
 					</dict>
 					<key>HS02</key>
 					<dict>
-						<key>#comment</key>
-						<string>USB-A 2.0 Port 2</string>
 						<key>UsbConnector</key>
 						<integer>3</integer>
 						<key>port</key>
@@ -66,10 +62,8 @@
 					</dict>
 					<key>HS03</key>
 					<dict>
-						<key>#comment</key>
-						<string>USB-A 2.0 Port 3</string>
 						<key>UsbConnector</key>
-						<integer>3</integer>
+						<integer>0</integer>
 						<key>port</key>
 						<data>
 						AwAAAA==
@@ -77,30 +71,24 @@
 					</dict>
 					<key>HS04</key>
 					<dict>
-						<key>#comment</key>
-						<string>USB-A 2.0 Port 4</string>
 						<key>UsbConnector</key>
-						<integer>3</integer>
+						<integer>0</integer>
 						<key>port</key>
 						<data>
 						BAAAAA==
 						</data>
 					</dict>
-					<key>SS01</key>
+					<key>HS05</key>
 					<dict>
-						<key>#comment</key>
-						<string>USB-A 3.0 Port 1</string>
 						<key>UsbConnector</key>
-						<integer>3</integer>
+						<integer>255</integer>
 						<key>port</key>
 						<data>
 						BQAAAA==
 						</data>
 					</dict>
-					<key>SS02</key>
+					<key>SS01</key>
 					<dict>
-						<key>#comment</key>
-						<string>USB-A 3.0 Port 2</string>
 						<key>UsbConnector</key>
 						<integer>3</integer>
 						<key>port</key>
@@ -108,26 +96,13 @@
 						BgAAAA==
 						</data>
 					</dict>
-					<key>SS03</key>
+					<key>SS02</key>
 					<dict>
-						<key>#comment</key>
-						<string>USB-A 3.0 Port 3</string>
 						<key>UsbConnector</key>
 						<integer>3</integer>
 						<key>port</key>
 						<data>
 						BwAAAA==
-						</data>
-					</dict>
-					<key>SS04</key>
-					<dict>
-						<key>#comment</key>
-						<string>USB-A 3.0 Port 4</string>
-						<key>UsbConnector</key>
-						<integer>3</integer>
-						<key>port</key>
-						<data>
-						CAAAAA==
 						</data>
 					</dict>
 				</dict>
@@ -149,14 +124,12 @@
 			<dict>
 				<key>port-count</key>
 				<data>
-				BAAAAA==
+				AgAAAA==
 				</data>
 				<key>ports</key>
 				<dict>
 					<key>HS01</key>
 					<dict>
-						<key>#comment</key>
-						<string>Internal Camera / Bluetooth</string>
 						<key>UsbConnector</key>
 						<integer>255</integer>
 						<key>port</key>
@@ -164,37 +137,13 @@
 						AQAAAA==
 						</data>
 					</dict>
-					<key>HS02</key>
+					<key>SS01</key>
 					<dict>
-						<key>#comment</key>
-						<string>Internal Secondary</string>
 						<key>UsbConnector</key>
 						<integer>255</integer>
 						<key>port</key>
 						<data>
 						AgAAAA==
-						</data>
-					</dict>
-					<key>HS03</key>
-					<dict>
-						<key>#comment</key>
-						<string>XHC1 USB 2.0</string>
-						<key>UsbConnector</key>
-						<integer>3</integer>
-						<key>port</key>
-						<data>
-						AwAAAA==
-						</data>
-					</dict>
-					<key>SS01</key>
-					<dict>
-						<key>#comment</key>
-						<string>XHC1 USB 3.0</string>
-						<key>UsbConnector</key>
-						<integer>3</integer>
-						<key>port</key>
-						<data>
-						BAAAAA==
 						</data>
 					</dict>
 				</dict>
@@ -216,14 +165,12 @@
 			<dict>
 				<key>port-count</key>
 				<data>
-				BAAAAA==
+				AgAAAA==
 				</data>
 				<key>ports</key>
 				<dict>
 					<key>HS01</key>
 					<dict>
-						<key>#comment</key>
-						<string>Type-C Port 1 USB 2.0</string>
 						<key>UsbConnector</key>
 						<integer>9</integer>
 						<key>port</key>
@@ -231,37 +178,13 @@
 						AQAAAA==
 						</data>
 					</dict>
-					<key>HS02</key>
+					<key>SS01</key>
 					<dict>
-						<key>#comment</key>
-						<string>Type-C Port 1 USB 2.0 Swapped</string>
 						<key>UsbConnector</key>
 						<integer>9</integer>
 						<key>port</key>
 						<data>
 						AgAAAA==
-						</data>
-					</dict>
-					<key>SS01</key>
-					<dict>
-						<key>#comment</key>
-						<string>Type-C Port 1 USB 3.0</string>
-						<key>UsbConnector</key>
-						<integer>9</integer>
-						<key>port</key>
-						<data>
-						AwAAAA==
-						</data>
-					</dict>
-					<key>SS02</key>
-					<dict>
-						<key>#comment</key>
-						<string>Type-C Port 1 USB 3.0 Swapped</string>
-						<key>UsbConnector</key>
-						<integer>9</integer>
-						<key>port</key>
-						<data>
-						BAAAAA==
 						</data>
 					</dict>
 				</dict>
@@ -283,14 +206,12 @@
 			<dict>
 				<key>port-count</key>
 				<data>
-				BAAAAA==
+				AgAAAA==
 				</data>
 				<key>ports</key>
 				<dict>
 					<key>HS01</key>
 					<dict>
-						<key>#comment</key>
-						<string>Type-C Port 2 USB 2.0</string>
 						<key>UsbConnector</key>
 						<integer>9</integer>
 						<key>port</key>
@@ -298,37 +219,13 @@
 						AQAAAA==
 						</data>
 					</dict>
-					<key>HS02</key>
+					<key>SS01</key>
 					<dict>
-						<key>#comment</key>
-						<string>Type-C Port 2 USB 2.0 Swapped</string>
 						<key>UsbConnector</key>
 						<integer>9</integer>
 						<key>port</key>
 						<data>
 						AgAAAA==
-						</data>
-					</dict>
-					<key>SS01</key>
-					<dict>
-						<key>#comment</key>
-						<string>Type-C Port 2 USB 3.0</string>
-						<key>UsbConnector</key>
-						<integer>9</integer>
-						<key>port</key>
-						<data>
-						AwAAAA==
-						</data>
-					</dict>
-					<key>SS02</key>
-					<dict>
-						<key>#comment</key>
-						<string>Type-C Port 2 USB 3.0 Swapped</string>
-						<key>UsbConnector</key>
-						<integer>9</integer>
-						<key>port</key>
-						<data>
-						BAAAAA==
 						</data>
 					</dict>
 				</dict>
