@@ -1970,9 +1970,9 @@
 			<key>LegacyCommpage</key>
 			<false/>
 			<key>PanicNoKextDump</key>
-			<false/>
-			<key>PowerTimeoutKernelPanic</key>
 			<true/>
+			<key>PowerTimeoutKernelPanic</key>
+			<false/>
 			<key>ProvideCurrentCpuInfo</key>
 			<true/>
 			<key>SetApfsTrimTimeout</key>
