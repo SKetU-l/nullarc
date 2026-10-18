@@ -34,88 +34,90 @@
 			<string>AppleUSBXHCIPCI</string>
 			<key>IOProviderMergeProperties</key>
 			<dict>
+				<key>kUSBMuxEnabled</key>
+				<true/>
 				<key>port-count</key>
 				<data>
 				BwAAAA==
 				</data>
 				<key>ports</key>
 				<dict>
-					<key>PRT1</key>
+					<key>HS01</key>
 					<dict>
 						<key>UsbConnector</key>
 						<integer>3</integer>
-						<key>comment</key>
-						<string>Type-A USB 3.0/2.0 companion 1</string>
 						<key>port</key>
 						<data>
 						AQAAAA==
 						</data>
+						<key>Comment</key>
+						<string>Type-A USB 3.0/2.0 companion 1</string>
 					</dict>
-					<key>PRT2</key>
+					<key>HS02</key>
 					<dict>
 						<key>UsbConnector</key>
 						<integer>3</integer>
-						<key>comment</key>
-						<string>Type-A USB 3.0/2.0 companion 2 (WiFi Dongle)</string>
 						<key>port</key>
 						<data>
 						AgAAAA==
 						</data>
+						<key>Comment</key>
+						<string>Type-A USB 3.0/2.0 companion 2 (WiFi Dongle)</string>
 					</dict>
-					<key>PRT3</key>
+					<key>HS03</key>
 					<dict>
 						<key>UsbConnector</key>
 						<integer>0</integer>
-						<key>comment</key>
-						<string>Type-A USB 2.0 only (Card Reader)</string>
 						<key>port</key>
 						<data>
 						AwAAAA==
 						</data>
+						<key>Comment</key>
+						<string>Type-A USB 2.0 only</string>
 					</dict>
-					<key>PRT4</key>
+					<key>HS04</key>
 					<dict>
 						<key>UsbConnector</key>
 						<integer>255</integer>
-						<key>comment</key>
-						<string>Internal USB 2.0 Hub 34d1:0608 (Flash Drive)</string>
 						<key>port</key>
 						<data>
 						BAAAAA==
 						</data>
+						<key>Comment</key>
+						<string>Internal USB 2.0 Hub 34d1:0608 (Flash Drive)</string>
 					</dict>
-					<key>PRT5</key>
+					<key>HS05</key>
 					<dict>
 						<key>UsbConnector</key>
 						<integer>255</integer>
-						<key>comment</key>
-						<string>Internal Bluetooth Radio 0bda:b85b</string>
 						<key>port</key>
 						<data>
 						BQAAAA==
 						</data>
+						<key>Comment</key>
+						<string>Internal Bluetooth Radio 0bda:b85b</string>
 					</dict>
 					<key>SS01</key>
 					<dict>
 						<key>UsbConnector</key>
 						<integer>3</integer>
-						<key>comment</key>
-						<string>Type-A USB 3.0 SuperSpeed 1</string>
 						<key>port</key>
 						<data>
 						BgAAAA==
 						</data>
+						<key>Comment</key>
+						<string>Type-A USB 3.0 SuperSpeed 1</string>
 					</dict>
 					<key>SS02</key>
 					<dict>
 						<key>UsbConnector</key>
 						<integer>3</integer>
-						<key>comment</key>
-						<string>Type-A USB 3.0 SuperSpeed 2</string>
 						<key>port</key>
 						<data>
 						BwAAAA==
 						</data>
+						<key>Comment</key>
+						<string>Type-A USB 3.0 SuperSpeed 2</string>
 					</dict>
 				</dict>
 			</dict>
@@ -134,88 +136,90 @@
 			<string>AppleUSBXHCIPCI</string>
 			<key>IOProviderMergeProperties</key>
 			<dict>
+				<key>kUSBMuxEnabled</key>
+				<true/>
 				<key>port-count</key>
 				<data>
 				BwAAAA==
 				</data>
 				<key>ports</key>
 				<dict>
-					<key>PRT1</key>
+					<key>HS01</key>
 					<dict>
 						<key>UsbConnector</key>
 						<integer>3</integer>
-						<key>comment</key>
-						<string>Type-A USB 3.0/2.0 companion 1</string>
 						<key>port</key>
 						<data>
 						AQAAAA==
 						</data>
+						<key>Comment</key>
+						<string>Type-A USB 3.0/2.0 companion 1</string>
 					</dict>
-					<key>PRT2</key>
+					<key>HS02</key>
 					<dict>
 						<key>UsbConnector</key>
 						<integer>3</integer>
-						<key>comment</key>
-						<string>Type-A USB 3.0/2.0 companion 2 (WiFi Dongle)</string>
 						<key>port</key>
 						<data>
 						AgAAAA==
 						</data>
+						<key>Comment</key>
+						<string>Type-A USB 3.0/2.0 companion 2 (WiFi Dongle)</string>
 					</dict>
-					<key>PRT3</key>
+					<key>HS03</key>
 					<dict>
 						<key>UsbConnector</key>
 						<integer>0</integer>
-						<key>comment</key>
-						<string>Type-A USB 2.0 only (Card Reader)</string>
 						<key>port</key>
 						<data>
 						AwAAAA==
 						</data>
+						<key>Comment</key>
+						<string>Type-A USB 2.0 only</string>
 					</dict>
-					<key>PRT4</key>
+					<key>HS04</key>
 					<dict>
 						<key>UsbConnector</key>
 						<integer>255</integer>
-						<key>comment</key>
-						<string>Internal USB 2.0 Hub 34d1:0608 (Flash Drive)</string>
 						<key>port</key>
 						<data>
 						BAAAAA==
 						</data>
+						<key>Comment</key>
+						<string>Internal USB 2.0 Hub 34d1:0608 (Flash Drive)</string>
 					</dict>
-					<key>PRT5</key>
+					<key>HS05</key>
 					<dict>
 						<key>UsbConnector</key>
 						<integer>255</integer>
-						<key>comment</key>
-						<string>Internal Bluetooth Radio 0bda:b85b</string>
 						<key>port</key>
 						<data>
 						BQAAAA==
 						</data>
+						<key>Comment</key>
+						<string>Internal Bluetooth Radio 0bda:b85b</string>
 					</dict>
 					<key>SS01</key>
 					<dict>
 						<key>UsbConnector</key>
 						<integer>3</integer>
-						<key>comment</key>
-						<string>Type-A USB 3.0 SuperSpeed 1</string>
 						<key>port</key>
 						<data>
 						BgAAAA==
 						</data>
+						<key>Comment</key>
+						<string>Type-A USB 3.0 SuperSpeed 1</string>
 					</dict>
 					<key>SS02</key>
 					<dict>
 						<key>UsbConnector</key>
 						<integer>3</integer>
-						<key>comment</key>
-						<string>Type-A USB 3.0 SuperSpeed 2</string>
 						<key>port</key>
 						<data>
 						BwAAAA==
 						</data>
+						<key>Comment</key>
+						<string>Type-A USB 3.0 SuperSpeed 2</string>
 					</dict>
 				</dict>
 			</dict>
@@ -234,6 +238,8 @@
 			<string>AppleUSBXHCIPCI</string>
 			<key>IOProviderMergeProperties</key>
 			<dict>
+				<key>kUSBMuxEnabled</key>
+				<true/>
 				<key>port-count</key>
 				<data>
 				AgAAAA==
@@ -244,23 +250,23 @@
 					<dict>
 						<key>UsbConnector</key>
 						<integer>9</integer>
-						<key>comment</key>
-						<string>Type-C USB 2.0</string>
 						<key>port</key>
 						<data>
 						AQAAAA==
 						</data>
+						<key>Comment</key>
+						<string>Type-C USB 2.0</string>
 					</dict>
 					<key>SS01</key>
 					<dict>
 						<key>UsbConnector</key>
 						<integer>9</integer>
-						<key>comment</key>
-						<string>Type-C SuperSpeed</string>
 						<key>port</key>
 						<data>
 						AgAAAA==
 						</data>
+						<key>Comment</key>
+						<string>Type-C SuperSpeed</string>
 					</dict>
 				</dict>
 			</dict>
@@ -279,6 +285,8 @@
 			<string>AppleUSBXHCIPCI</string>
 			<key>IOProviderMergeProperties</key>
 			<dict>
+				<key>kUSBMuxEnabled</key>
+				<true/>
 				<key>port-count</key>
 				<data>
 				AgAAAA==
@@ -289,23 +297,23 @@
 					<dict>
 						<key>UsbConnector</key>
 						<integer>9</integer>
-						<key>comment</key>
-						<string>Type-C USB 2.0</string>
 						<key>port</key>
 						<data>
 						AQAAAA==
 						</data>
+						<key>Comment</key>
+						<string>Type-C USB 2.0</string>
 					</dict>
 					<key>SS01</key>
 					<dict>
 						<key>UsbConnector</key>
 						<integer>9</integer>
-						<key>comment</key>
-						<string>Type-C SuperSpeed</string>
 						<key>port</key>
 						<data>
 						AgAAAA==
 						</data>
+						<key>Comment</key>
+						<string>Type-C SuperSpeed</string>
 					</dict>
 				</dict>
 			</dict>
