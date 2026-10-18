@@ -882,7 +882,7 @@
 				<key>Comment</key>
 				<string>Native AppleUSBHostMergeProperties USB Port Map</string>
 				<key>Enabled</key>
-				<true/>
+				<false/>
 				<key>ExecutablePath</key>
 				<string></string>
 				<key>MaxKernel</key>
