@@ -128,3 +128,21 @@ F32_CNTL(0xF89A)=0x08084000 (unhalt), RB_CNTL=0x841815, IB_CNTL=0x101. Адре�
 Скрипты: tools/phxctl/{bringup5.sh,full.sh,fresh.sh,mesboot.c}. Команда: `MC=1 CS=1 bash ~/gpu/full.sh kiqsched` после чистой перезагрузки.
 Дальше: (a) GPUVM: настроить GCVM L2 как в Linux (L2_CNTL=0x80e01, CNTL3=0x80130009...), контексты VMID 8..15 (CNTL=0x01fffe07), понять почему GART-VA записи не доходят;
 (b) перенести последовательность в kext (авто-bring-up), (c) IB из user-клиента через INDIRECT_BUFFER с VMID 8, (d) dispatch шейдера (vkprobe 256/256).
+
+## E6 — GPUVM context0 работает (2026-10-20)
+Ключ: полная копия gfxhub-регистров из трассы Linux + таблица страниц в СИСТЕМНОЙ памяти (корень phys|3) + clflush при записи PTE; цель — страницы VRAM (PA=0x6A0000000+off, флаги 0x71).
+Запись CP в системные страницы через VM пока не доходит (SDMA через MMHUB AGP — доходит) -> BO держим в VRAM-пуле (carve-out 6 GiB), GTT откладываем.
+Дальше: контексты VMID 8+ (4 уровня, depth 3), INDIRECT_BUFFER с VMID, перенос в kext, dispatch шейдера.
+
+## E7 — контекст приложения VMID 8 (2026-10-20)
+4-уровневая таблица (каталоги в системной памяти, PDE = phys|7 без BFS/TF), IB с VMID 8 исполняется, запись доходит после ACQUIRE_MEM (GL2 writeback).
+Тесты гонять с FAULT_DEFAULT=1, чтобы ошибки трансляции не вешали CP.
+Дальше: перенос bring-up и VM в kext, путь SUBMIT для RADV, dispatch шейдера.
+
+## E8 — Mesa RADV Darwin (Vulkan API 1.4.363) на AMD Radeon 780M (2026-10-20)
+* **Ядро (Build 18)**: UserClient `IOAccelPhxNativeClient` научился принимать вызовы `doDbgAdoptQueue` (селектор 112) и отдавать MES compute queue пользовательскому процессу.
+* **RADV Darwin**: Mesa 26.3.0-devel (RADV) успешно подключилась к kext через UserClient:
+  `[0] AMD Radeon 780M Graphics (RADV PHOENIX) vendor 0x1002 device 0x1900 api 1.4.363`
+* **Создание устройства и шейдеры**: `VkDevice` создан, compute pipeline скомпилирован через ACO (`fill.comp` SPIR-V), командный буфер передан на видеокарту (`RPTR = 0x18, WPTR = 0x18`).
+* **Окружение**: macOS Tahoe (Darwin 25.x).
+

@@ -2,7 +2,7 @@
 # usage: fresh.sh "<remote cmd>" -> reboot Mac, wait for kext, run command
 SSH_USER="${MAC_SSH_USER:-admin}"
 SSH_PASS="${MAC_SSH_PASS:-}"
-IP="${MAC_IP:-192.168.31.240}"
+IP="${MAC_IP:-192.168.1.100}"
 O="-o StrictHostKeyChecking=no -o ConnectTimeout=10"
 
 if [ -n "$SSH_PASS" ]; then
@@ -13,9 +13,9 @@ fi
 sleep 75
 for i in $(seq 1 45); do
     if [ -n "$SSH_PASS" ]; then
-        sshpass -p "$SSH_PASS" ssh $O "$SSH_USER@$IP" 'ioreg -l | grep -c "phx-build\" = 12"' 2>/dev/null | grep -q '^[1-9]' && break
+        sshpass -p "$SSH_PASS" ssh $O "$SSH_USER@$IP" 'ioreg -l | grep -c "phx-build"' 2>/dev/null | grep -q '^[1-9]' && break
     else
-        ssh $O "$SSH_USER@$IP" 'ioreg -l | grep -c "phx-build\" = 12"' 2>/dev/null | grep -q '^[1-9]' && break
+        ssh $O "$SSH_USER@$IP" 'ioreg -l | grep -c "phx-build"' 2>/dev/null | grep -q '^[1-9]' && break
     fi
     sleep 8
 done

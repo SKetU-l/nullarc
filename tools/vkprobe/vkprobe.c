@@ -69,10 +69,28 @@ int main(void)
          printf("    queue family %u: flags 0x%x count %u\n", q, qf[q].queueFlags, qf[q].queueCount);
    }
 
+   // Prefer a compute-only queue family: on the 780M only the MES-mapped compute (MEC) queue executes for now.
+   uint32_t qfam = 0;
+   {
+      uint32_t qn = 0;
+      vkGetPhysicalDeviceQueueFamilyProperties(pds[0], &qn, NULL);
+      VkQueueFamilyProperties qf[16];
+      if (qn > 16)
+         qn = 16;
+      vkGetPhysicalDeviceQueueFamilyProperties(pds[0], &qn, qf);
+      for (uint32_t q = 0; q < qn; q++)
+         if ((qf[q].queueFlags & VK_QUEUE_COMPUTE_BIT) && !(qf[q].queueFlags & VK_QUEUE_GRAPHICS_BIT)) {
+            qfam = q;
+            break;
+         }
+      if (getenv("VKPROBE_QFAM"))
+         qfam = (uint32_t)atoi(getenv("VKPROBE_QFAM"));
+      printf("using queue family %u\n", qfam);
+   }
    float prio = 1.0f;
    VkDeviceQueueCreateInfo qci = {
       .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-      .queueFamilyIndex = 0,
+      .queueFamilyIndex = qfam,
       .queueCount = 1,
       .pQueuePriorities = &prio,
    };
@@ -192,7 +210,7 @@ int main(void)
    };
    vkUpdateDescriptorSets(dev, 1, &wds, 0, NULL);
 
-   VkCommandPoolCreateInfo cpi = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, .queueFamilyIndex = 0};
+   VkCommandPoolCreateInfo cpi = {.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO, .queueFamilyIndex = qfam};
    VkCommandPool pool;
    CHECK(vkCreateCommandPool(dev, &cpi, NULL, &pool));
    VkCommandBufferAllocateInfo cbai = {
@@ -211,7 +229,7 @@ int main(void)
    CHECK(vkEndCommandBuffer(cb));
 
    VkQueue q;
-   vkGetDeviceQueue(dev, 0, 0, &q);
+   vkGetDeviceQueue(dev, qfam, 0, &q);
    VkFenceCreateInfo fci = {.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
    VkFence fence;
    CHECK(vkCreateFence(dev, &fci, NULL, &fence));

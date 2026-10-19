@@ -1,10 +1,11 @@
 # AMD RDNA 3 (Radeon 780M / GFX1103) macOS Driver & Bringup Project
 
-[![macOS](https://img.shields.io/badge/macOS-Sonoma%2014.8.x-success?logo=apple&logoColor=white)](https://www.apple.com/macos/sonoma/)
+[![macOS](https://img.shields.io/badge/macOS-Tahoe%20(Darwin%2025.x)-success?logo=apple&logoColor=white)](https://www.apple.com/macos/)
 [![Architecture](https://img.shields.io/badge/Architecture-RDNA%203%20%2F%20GFX1103-red?logo=amd&logoColor=white)](https://www.amd.com/)
+[![Vulkan](https://img.shields.io/badge/Vulkan-1.4.363%20(RADV)-red?logo=vulkan&logoColor=white)](https://mesa3d.org/)
 [![Kernel](https://img.shields.io/badge/Kernel-IOKit%20DriverKit-black?logo=apple&logoColor=white)](https://developer.apple.com/)
 
-Pioneering open-source driver stack and low-level hardware bringup for **AMD RDNA 3 integrated graphics (Radeon 780M / Phoenix & Hawk Point APUs, GFX1103 / GC 11.0.1)** on **macOS**.
+Pioneering open-source driver stack and low-level hardware bringup for **AMD RDNA 3 integrated graphics (Radeon 780M / Phoenix & Hawk Point APUs, GFX1103 / GC 11.0.1)** on **macOS Tahoe (Darwin 25.x)**.
 
 ---
 
@@ -12,13 +13,16 @@ Pioneering open-source driver stack and low-level hardware bringup for **AMD RDN
 
 Apple officially dropped AMD driver development after RDNA 2 (Navi 21/23/24). RDNA 3 (Phoenix, Hawk Point, Strix Point) has **never** been supported by macOS, rendering modern AMD laptops completely devoid of hardware acceleration.
 
-This project is the first to achieve **real, hardware-level code execution on AMD RDNA 3 silicon under macOS Sonoma**:
+This project is the first in history to achieve **real, hardware-level code execution and userland Vulkan API support on AMD RDNA 3 silicon under macOS Tahoe**:
 
 * **DCN 3.1.4 Native Display Scanout**: Pixel-perfect hardware display scanout at native **2560x1600 @ 120Hz** on the built-in laptop eDP panel without white-screen or framebuffer corruption.
 * **PSP & RLC Initialization**: Successful validation and loading of AMD Platform Security Processor (PSP) firmware and RLC autoloading in macOS.
 * **SMU GfxImu Bringup**: Initialized Graphics Internal Microcontroller via SMU message passing (`EnableGfxImu`).
 * **MES v11 (Micro Engine Scheduler) Running**: Spun up AMD MES v11 scheduler and Kernel Interface Queue (KIQ) pipe.
-* **Silicon-Level PM4 Execution**: Successfully mapped compute queues via MES (`ADD_QUEUE map_legacy_kq`) and executed PM4 command streams (`SET_UCONFIG_REG`, `WRITE_DATA`) directly on the physical Radeon 780M compute units.
+* **SDMA Engine DMA**: Verified high-speed DMA transfers directly into system host memory and VRAM via MMHUB AGP.
+* **Hardware GART Memory Translation**: Fully working GPUVM Context 0 (GART) page tables with coherent `MTYPE=4` cache routing.
+* **User-Space Virtual Memory (VMID 8)**: 4-level page table walking for user processes, executing PM4 `INDIRECT_BUFFER` packets with `IB_VALID (bit 23)`.
+* **Mesa RADV Vulkan (Vulkan 1.4.363) Running**: Device enumeration (`[0] AMD Radeon 780M Graphics (RADV PHOENIX)`), logical device creation, and compute pipeline compilation via Mesa ACO under macOS Darwin!
 
 ---
 
@@ -32,16 +36,16 @@ rdna3-driver/
 │   │   ├── RDNA3Framebuffer.cpp# IOFramebuffer & ATIFramebuffer handshake
 │   │   ├── RDNA3UserClient.cpp # UserClient interface for diagnostic ring access
 │   │   └── DCN314Scanout.cpp  # Display Core Next 3.1.4 timing & surface scanout
-│   ├── phxbringup/            # Low-level Phoenix bringup kernel module
+│   ├── phxbringup/            # Low-level Phoenix bringup kernel module (Build 18)
 │   └── phxprobe/              # Hardware capability probing
 ├── tools/
 │   ├── phxctl/                # Low-level control & PM4 dispatch tools
-│   │   ├── mesboot.c          # MES scheduling & GART / GCVM initialization
+│   │   ├── mesboot.c          # MES scheduling, GART & VMID 8 multi-level paging
 │   │   ├── phxctl.c           # MMIO BAR register inspection & doorbells
 │   │   ├── mes_v11_api_def.h  # MES v11 firmware packet structure definitions
 │   │   └── bringup*.sh        # Automated bringup sequencing scripts
 │   ├── vkprobe/               # Vulkan compute shader execution verification
-│   │   ├── vkprobe.c          # Vulkan instance & headless dispatch tester
+│   │   ├── vkprobe.c          # Vulkan instance, device & headless dispatch tester
 │   │   └── fill.comp          # SPIR-V compute shader test payload
 │   └── ue200/                 # Hardware Ethernet watchdog & PHY reset
 ├── mesa-patches-phoenix/      # Mesa RADV (Radeon Vulkan) GFX1103 adaptation
@@ -52,27 +56,16 @@ rdna3-driver/
 
 ---
 
-## ⚡ Current Milestone: GCVM / GART Translation
-
-Current active engineering focus is **GPU Virtual Memory (GCVM Context 0 / GART)** translation. 
-
-While direct physical system aperture (`0x80_...`) operations execute flawlessly, virtual address translation through GART depth-0 page tables requires precise register configuration discovered by diffing Linux kernel traces:
-1. **Invalidation Range Programming**: `regGCVM_INVALIDATE_ENG0..17_ADDR_RANGE` must be configured with full address ranges (`0xffffffff` / `0x1f`) to prevent TLB invalidation from being silently constrained to page 0.
-2. **Protection Fault Unmasking**: `GCVM_L2_PROTECTION_FAULT_CNTL` must clear `ENABLE_DEFAULT` bits (bit 1 `ALLOW_SUBSEQUENT_STATUS_UPDATES`) to prevent faults from being silently redirected to dummy pages.
-3. **VMID 0 Aperture Binding**: `regSH_MEM_CONFIG` (`0x0000c00c`) configuration for 64-bit flat shader addressing.
-
----
-
 ## 🗺️ Roadmap to Full Metal 3D Acceleration
 
 ```text
-[Phase 1: Kernel & Microcode] -> COMPLETED (PM4 execution on silicon verified)
+[Phase 1: Silicon & Microcode] ──► COMPLETED (PSP, MES v11, SDMA, DCN 3.1.4 120Hz)
       │
-[Phase 2: GPU Virtual Memory] -> CURRENT MILESTONE (GCVM / GART bringup)
+[Phase 2: GPU Virtual Memory]  ──► COMPLETED (GART, 4-level VMID 8, Indirect Buffers)
       │
-[Phase 3: Mesa RADV (Vulkan)] -> Userland shader compiler & IOSurface export
+[Phase 3: Mesa RADV (Vulkan)]  ──► ACTIVE (Vulkan 1.4 initialized, device created, ACO compiled)
       │
-[Phase 4: Metal / WindowServer Bridge] -> IOAccelerator interface for macOS Desktop
+[Phase 4: Metal / WindowServer] ──► NEXT (metal2vulkan bridge & IOAccelerator for macOS Desktop)
 ```
 
 ---
