@@ -3,19 +3,8 @@
 [![macOS](https://img.shields.io/badge/macOS-Sonoma%2014.8.x-success?logo=apple&logoColor=white)](https://www.apple.com/macos/sonoma/)
 [![Architecture](https://img.shields.io/badge/Architecture-RDNA%203%20%2F%20GFX1103-red?logo=amd&logoColor=white)](https://www.amd.com/)
 [![Kernel](https://img.shields.io/badge/Kernel-IOKit%20DriverKit-black?logo=apple&logoColor=white)](https://developer.apple.com/)
-[![AI Engineered](https://img.shields.io/badge/Engineered%20with-Claude%20%26%20Gemini-8A2BE2?logo=openai&logoColor=white)](#-engineered-entirely-with-ai-anthropic-claude--google-gemini)
 
 Pioneering open-source driver stack and low-level hardware bringup for **AMD RDNA 3 integrated graphics (Radeon 780M / Phoenix & Hawk Point APUs, GFX1103 / GC 11.0.1)** on **macOS**.
-
----
-
-## 🤖 Engineered Entirely with AI (Anthropic Claude & Google Gemini)
-
-> **Этот проект, включая сложнейший реверс-инжиниринг недокументированных регистров AMD, декодирование структур MES v11, сопоставление трасс ядра Linux и написание драйвера ядра IOKit, полностью спроектирован и реализован искусственным интеллектом.**
->
-> Проект создан в совместной автономной работе двух передовых ИИ-систем:
-> * **Anthropic Claude (Claude Code)** — архитектурная реализация планировщика MES (`mesboot.c`), создание очередей вычислений KIQ/Compute, разработка зондов Vulkan (`vkprobe`), написание пользовательских утилит `phxctl` и патчей Mesa RADV.
-> * **Google DeepMind Gemini (Antigravity)** — первоначальная архитектура кекста `RDNA3Driver`, имплементация таймингов DCN 3.1.4 для eDP 2560x1600@120Hz, декомпиляция сетевого стека, глубокий диффинг регистров подсистем `gfxhub_v3_0` / `gmc_v11_0` из ядра Linux и выявление скрытых блокировок инвалидации TLB / маскирования ошибок GCVM.
 
 ---
 
