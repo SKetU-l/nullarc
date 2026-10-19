@@ -18,6 +18,7 @@
 #define SEL_DBG_VRAM_WRITE 109
 #define SEL_DBG_DOORBELL 110
 #define SEL_DBG_SYSMEM 111
+#define SEL_DBG_ADOPTQ 112
 
 static io_connect_t conn;
 
@@ -88,6 +89,7 @@ static uint32_t vr(uint64_t off)
 #define SCH_EOP  0x2513000ull
 #define TESTBUF  0x2520000ull
 
+static int env_on(const char *n) { const char *v = getenv(n); return v && *v && *v != '0'; }
 static int use_mc;
 #define VA(off) ((use_mc ? VRAM_MC : GART_VA) + (off))
 #define MC(off) (VRAM_MC + (off))
@@ -108,7 +110,7 @@ static void gart(void)
    wr(SEG0(0x15a8), 0x006a0f9f); wr(SEG0(0x15a9), 0);                           // SYSTEM_APERTURE_DEFAULT_ADDR LSB/MSB
    wr(SEG0(0x15cb), 0x0000a23c); wr(SEG0(0x15cc), 0);                           // L2 protection fault default addr
    wr(SEG0(0x15c5), 0x00060000);                                                // L2_PROTECTION_FAULT_CNTL2
-   wr(SEG0(0x15c4), getenv("FAULT_DEFAULT") ? 0x3ffffffc : 0x00000002);   // debug: no default-page redirect so faults are recorded                                                // L2_PROTECTION_FAULT_CNTL (fault handling on; was missing -> silent drops)
+   wr(SEG0(0x15c4), env_on("FAULT_DEFAULT") ? 0x3ffffffc : 0x00000002);   // debug: no default-page redirect so faults are recorded                                                // L2_PROTECTION_FAULT_CNTL (fault handling on; was missing -> silent drops)
    wr(SEG0(0x15ce), 0xffffffff); wr(SEG0(0x15cf), 0x0000000f); wr(SEG0(0x15d0), 0);  // identity aperture LOW/HIGH (disabled)
    wr(SEG0(0x167f), 0x1859);                 // GCMC_VM_MX_L1_TLB_CNTL
    // GCVM L2 exactly as the working Linux driver programs it (regtrace, 1.558983..)
@@ -327,6 +329,7 @@ static int mes_submit(void *pkt, size_t size, size_t api_status_off, const char 
 #define CMP_WB   0x2541000ull
 #define CMP_MQD  0x2542000ull
 #define CMP_EOP  0x2543000ull
+static void vm8_test(void);
 static void compute_via_mes(void)
 {
    for (int i = 0; i < 1024; i++) vw(CMP_RING + i * 4, 0);
@@ -355,43 +358,98 @@ static void compute_via_mes(void)
    grbm_select(1, 0, 0, 0);
    printf("compute: scratch0=0x%08x (want deadbeef) testbuf=0x%08x (want feedf00d) hqd_active=%u rptr=%u\n", rd(SEG1(0x2040)), vr(TESTBUF), rd(SEG0(0x1fab)), rd(SEG0(0x1fb3)));
    grbm_select(0, 0, 0, 0);
+   if (env_on("ADOPT")) {   // hand the working compute queue to the kext: SUBMIT from RADV goes here from now on
+      uint64_t in[6] = {CMP_RING, 1024, CMP_WB, 6 * 4, 8, 0x2550000};
+      kern_return_t kr = IOConnectCallScalarMethod(conn, SEL_DBG_ADOPTQ, in, 6, NULL, NULL);
+      printf("adopt queue -> kr 0x%x\n", kr);
+      return;
+   }
+   if (env_on("VM8")) { vm8_test(); return; }
    if (getenv("MESBOOT_VMT") && *getenv("MESBOOT_VMT")) {
       // GPU write into SYSTEM memory through a context0 (GART) mapping, PTE SYSTEM|SNOOPED
       uint64_t phys = 0, len = 0, val = 0;
       kern_return_t kr = sm(1, 1 << 20, 0, &phys, &len);
       printf("sysmem alloc kr=0x%x phys=0x%llx len=0x%llx\n", kr, (unsigned long long)phys, (unsigned long long)len);
       if (kr) return;
+      if (env_on("AGPTEST")) {   // can the GPU write system memory at all? identity AGP aperture MC==physical, no page tables
+         wr(SEG0(0x167c), 0); wr(SEG0(0x167b), 0); wr(SEG0(0x167a), 0x000001ff);       // AGP BASE=0, BOT=0, TOP=0x1ff (8 GiB, 16 MiB units)
+         if (env_on("CTX0_OFF")) { wr(SEG0(0x1688), 0x01fffe00); wr(SEG0(0x16ab + 17), 0x00F80001); usleep(2000); }   // MMHUB-like: no context0 translation
+         uint64_t tgt = phys + 0x80000ull + 0x2000;                                     // inside the 1 MiB buffer
+         uint32_t b = 8;
+         vw(CMP_RING + b * 4 + 0, 0xC0033700); vw(CMP_RING + b * 4 + 4, 0x00100500);
+         vw(CMP_RING + b * 4 + 8, (uint32_t)tgt); vw(CMP_RING + b * 4 + 12, (uint32_t)(tgt >> 32)); vw(CMP_RING + b * 4 + 16, 0xA6A6A6A6);
+         b += 5;
+         vw(CMP_RING + b * 4 + 0, 0xC0065800); vw(CMP_RING + b * 4 + 4, 0);                       // ACQUIRE_MEM: GL2 writeback+invalidate
+         vw(CMP_RING + b * 4 + 8, 0xFFFFFFFF); vw(CMP_RING + b * 4 + 12, 0x00FFFFFF);
+         vw(CMP_RING + b * 4 + 16, 0); vw(CMP_RING + b * 4 + 20, 0);
+         vw(CMP_RING + b * 4 + 24, 0x0A); vw(CMP_RING + b * 4 + 28, 0xC000);
+         b += 8;
+         vw(CMP_WB + 16, b); vw(CMP_WB + 20, 0); db(6 * 4, b); usleep(300000);
+         // GPU READ tests with COPY_DATA (src_sel=2 mem via L2, dst_sel=5 mem), first VRAM->VRAM to validate the encoding, then system->VRAM
+         {
+            uint64_t pp0, vv0; sm(3, 0x80000ull + 0x3000, 0x5A5A5A5A, &pp0, &vv0);
+            vw(TESTBUF + 0x100, 0x77777777); vw(TESTBUF + 0x110, 0); vw(TESTBUF + 0x114, 0);
+            struct { uint64_t src, dst; } cp[2] = { { MC(TESTBUF + 0x100), MC(TESTBUF + 0x110) }, { tgt + 0x1000, MC(TESTBUF + 0x114) } };
+            for (int k = 0; k < 2; k++) {
+               vw(CMP_RING + b * 4 + 0, 0xC0044000); vw(CMP_RING + b * 4 + 4, 2 | (5u << 8) | (1u << 20));
+               vw(CMP_RING + b * 4 + 8, (uint32_t)cp[k].src); vw(CMP_RING + b * 4 + 12, (uint32_t)(cp[k].src >> 32));
+               vw(CMP_RING + b * 4 + 16, (uint32_t)cp[k].dst); vw(CMP_RING + b * 4 + 20, (uint32_t)(cp[k].dst >> 32));
+               b += 6; vw(CMP_WB + 16, b); db(6 * 4, b); usleep(300000);
+               printf("COPY_DATA test %d (%s): dst=0x%08x\n", k, k ? "system->VRAM" : "VRAM->VRAM", vr(TESTBUF + (k ? 0x114 : 0x110)));
+            }
+         }
+         uint64_t pp, v = 0; sm(2, 0x80000ull + 0x2000, 0, &pp, &v);
+         printf("AGP identity write to system memory phys 0x%llx: value=0x%08x (want a6a6a6a6)\n", (unsigned long long)tgt, (uint32_t)v);
+         return;
+      }
       const uint64_t vaoff = 0x7F00000;
       const int vram_t = getenv("MESBOOT_VMT")[0] == '2';
+      const int pt_sys = getenv("PT_SYS") && *getenv("PT_SYS") == '1';   // page table itself in system memory
+      uint64_t sysphys = phys;
       if (vram_t) phys = FB_PA + 0x2600000ull;
+      else if (pt_sys) phys = sysphys + 0x80000ull;                      // targets after the table region
       uint32_t wp = 8, hit = 0;
       static const uint64_t lowf[] = {0x77, 0x71, 0x73, 0x75, 0x7f};
       for (int mt = 0; mt < 5; mt++) {
          for (int fl = 0; fl < 5; fl++) {
             int idx = mt * 5 + fl;
-            uint64_t pte = (phys + idx * 4096ull) | lowf[fl] | ((uint64_t)mt << 48);
+            uint64_t pte = (phys + idx * 4096ull) | lowf[fl] | ((uint64_t)mt << 48) | (getenv("PTE_EXTRA") && *getenv("PTE_EXTRA") ? strtoull(getenv("PTE_EXTRA"), 0, 0) : 0);
             uint64_t slot = (vaoff >> 12) + idx;
-            vw(GART_PT + slot * 8, (uint32_t)pte);
-            vw(GART_PT + slot * 8 + 4, (uint32_t)(pte >> 32));
+            if (pt_sys) { uint64_t d0, d1; sm(3, slot * 8, (uint32_t)pte, &d0, &d1); sm(3, slot * 8 + 4, (uint32_t)(pte >> 32), &d0, &d1); }
+            else { vw(GART_PT + slot * 8, (uint32_t)pte); vw(GART_PT + slot * 8 + 4, (uint32_t)(pte >> 32)); }
          }
       }
+      if (pt_sys) {
+         wr(SEG0(0x16f3), (uint32_t)((sysphys & ~0xfffull) | (getenv("ROOT_FL") && *getenv("ROOT_FL") ? strtoul(getenv("ROOT_FL"), 0, 0) : 3))); wr(SEG0(0x16f4), (uint32_t)(sysphys >> 32));   // PDB base in SYSTEM memory
+         printf("PT in system memory at phys 0x%llx\n", (unsigned long long)sysphys);
+      }
       wr(SEG0(0x16ab + 17), 0x00F80001); usleep(2000);       // invalidate (eng17)
+      const char *vo = getenv("VARONLY"); const int only = (vo && *vo) ? atoi(vo) : -1;
       for (int idx = 0; idx < 25; idx++) {
+         if (only >= 0 && idx != only) continue;
          uint64_t gva = GART_VA + vaoff + idx * 4096ull;
          vw(CMP_RING + wp * 4 + 0, 0xC0033700); vw(CMP_RING + wp * 4 + 4, 0x00100500);
          vw(CMP_RING + wp * 4 + 8, (uint32_t)gva); vw(CMP_RING + wp * 4 + 12, (uint32_t)(gva >> 32)); vw(CMP_RING + wp * 4 + 16, 0xABCD0000 + idx);
          wp += 5;
       }
+      if (!env_on("NO_GCR")) {   // write back + invalidate the GPU L2 so cached (non-UC) writes reach memory
+         vw(CMP_RING + wp * 4 + 0, 0xC0065800); vw(CMP_RING + wp * 4 + 4, 0);
+         vw(CMP_RING + wp * 4 + 8, 0xFFFFFFFF); vw(CMP_RING + wp * 4 + 12, 0x00FFFFFF);
+         vw(CMP_RING + wp * 4 + 16, 0); vw(CMP_RING + wp * 4 + 20, 0);
+         vw(CMP_RING + wp * 4 + 24, 0x0A); vw(CMP_RING + wp * 4 + 28, 0xC000);
+         wp += 8;
+      }
       vw(CMP_WB + 16, wp); vw(CMP_WB + 20, 0);
       db(6 * 4, wp);
       usleep(300000);
       for (int idx = 0; idx < 25; idx++) {
-         uint64_t pp, val = 0; if (vram_t) val = vr(0x2600000 + idx * 4096ull); else sm(2, idx * 4096ull, 0, &pp, &val);
+         if (only >= 0 && idx != only) continue;
+         uint64_t pp, val = 0; if (vram_t) val = vr(0x2600000 + idx * 4096ull); else sm(2, (pt_sys ? 0x80000ull : 0) + idx * 4096ull, 0, &pp, &val);
          if ((uint32_t)val == 0xABCD0000u + idx) { printf("  HIT: mtype=%d flags=0x%llx\n", idx / 5, (unsigned long long)lowf[idx % 5]); hit++; }
       }
       // read test: CPU puts a magic into system page 0, GPU COPY_DATA gart-VA -> MC testbuf
-      {
-         uint64_t pp, vv; if (vram_t) vw(0x2600000, 0xC0FFEE11); else sm(3, 0, 0xC0FFEE11, &pp, &vv);
+      if (env_on("COPYTEST")) {
+         uint64_t pp, vv; if (vram_t) vw(0x2600000, 0xC0FFEE11); else sm(3, pt_sys ? 0x80000ull : 0, 0xC0FFEE11, &pp, &vv);
          vw(TESTBUF + 8, 0);
          uint64_t src = GART_VA + vaoff, dst = MC(TESTBUF + 8);
          uint32_t b = wp;
@@ -404,8 +462,83 @@ static void compute_via_mes(void)
       grbm_select(1, 0, 0, 0);
       printf("compute rptr=%u wptr_written=%u fault status=0x%x addr=0x%x:%x\n", rd(SEG0(0x1fb3)), wp, rd(SEG0(0x15c8)), rd(SEG0(0x15ca)), rd(SEG0(0x15c9)));
       grbm_select(0, 0, 0, 0);
+      if (!vram_t) {   // where did the GPU writes go? scan the first dword of every page of the 1 MiB buffer
+         int nz = 0;
+         for (int pg = 0; pg < 256; pg++) { uint64_t pp, v = 0; sm(2, pg * 4096ull, 0, &pp, &v);
+            if (pg >= 0x80 || !pt_sys) { if ((uint32_t)v) { printf("  page %d: 0x%08x\n", pg, (uint32_t)v); nz++; } } }
+         printf("scan: %d non-zero target pages\n", nz);
+      }
       printf("system-memory write via GART: %u hits of 25 variants (value=0x%08x)\n", hit, hit ? 0xabcd1234 : 0);
    }
+}
+
+// VMID 8 user context: 4-level page table in system memory, IB + target in VRAM pages, IB executed from the kernel compute ring
+static void vm8_test(void)
+{
+   uint64_t phys = 0, len = 0, d0, d1;
+   if (sm(1, 1 << 20, 0, &phys, &len)) { printf("vm8: sysmem alloc failed\n"); return; }
+   const uint64_t T2 = phys, T1 = phys + 0x1000, T0 = phys + 0x2000, TP = phys + 0x3000;
+   const uint64_t VA_IB = 0x100000000ull, VA_T = VA_IB + 0x1000;
+   const uint64_t IBO = 0x2700000ull, TGO = 0x2701000ull;           // VRAM offsets backing the two pages
+   const unsigned mt = getenv("VM8_MT") ? (unsigned)atoi(getenv("VM8_MT")) : 4;
+   const uint64_t flags = 0x71 | ((uint64_t)mt << 48);
+   #define PUT(off, val) do { uint64_t v_ = (val); sm(3, (off), (uint32_t)v_, &d0, &d1); sm(3, (off) + 4, (uint32_t)(v_ >> 32), &d0, &d1); } while (0)
+   const int V = 8;
+   const int flat = env_on("VM8_FLAT");
+   if (flat) {   // depth 0: one flat PTB covering 512 pages from VA_IB, like the working GART
+      PUT(0x0000 + 0 * 8, (FB_PA + IBO) | flags);
+      PUT(0x0000 + 1 * 8, (FB_PA + TGO) | flags);
+      wr(SEG0(0x16f3 + 2 * V), (uint32_t)(T2 | 3)); wr(SEG0(0x16f4 + 2 * V), (uint32_t)(T2 >> 32));
+      wr(SEG0(0x1688 + V), 0x01fffe01);
+      wr(SEG0(0x1713 + 2 * V), (uint32_t)(VA_IB >> 12)); wr(SEG0(0x1714 + 2 * V), (uint32_t)(VA_IB >> 44));
+      wr(SEG0(0x1733 + 2 * V), (uint32_t)((VA_IB >> 12) + 511)); wr(SEG0(0x1734 + 2 * V), (uint32_t)(VA_IB >> 44));
+   } else {
+      PUT(0x0000 + ((VA_IB >> 39) & 0x1ff) * 8, T1 | 7);
+      PUT(0x1000 + ((VA_IB >> 30) & 0x1ff) * 8, T0 | 7);                     // gmc_v11: translate_further=false -> plain PDE
+      PUT(0x2000 + ((VA_IB >> 21) & 0x1ff) * 8, TP | 7);
+      if (env_on("VM8_IBSYS")) PUT(0x3000 + ((VA_IB >> 12) & 0x1ff) * 8, (phys + 0x20000) | 0x77 | ((uint64_t)mt << 48));   // IB page in SYSTEM memory
+      else PUT(0x3000 + ((VA_IB >> 12) & 0x1ff) * 8, (FB_PA + IBO) | flags);
+      if (env_on("VM8_SYS")) PUT(0x3000 + ((VA_T >> 12) & 0x1ff) * 8, (phys + 0x10000) | 0x77 | ((uint64_t)mt << 48));   // target = SYSTEM page
+      else PUT(0x3000 + ((VA_T >> 12) & 0x1ff) * 8, (FB_PA + TGO) | flags);
+      wr(SEG0(0x16f3 + 2 * V), (uint32_t)(T2 | 3)); wr(SEG0(0x16f4 + 2 * V), (uint32_t)(T2 >> 32));
+      wr(SEG0(0x1688 + V), 0x01fffe07);
+      wr(SEG0(0x1713 + 2 * V), 0); wr(SEG0(0x1714 + 2 * V), 0);
+      wr(SEG0(0x1733 + 2 * V), 0xffffffff); wr(SEG0(0x1734 + 2 * V), 0xf);
+   }
+   #undef PUT
+   wr(SEG0(0x16ab + 17), 0x00F80000 | (1u << V) | 1u); usleep(2000);
+   // IB: WRITE_DATA to VA_T
+   const int ib0 = env_on("IB0");                       // control: same IB packet but VMID 0 + MC addresses (no VM involved)
+   const uint64_t ibva = ib0 ? MC(IBO) : VA_IB, tva = ib0 ? MC(TGO) : VA_T; const int vmid = ib0 ? 0 : V;
+   vw(IBO + 0, 0xC0033700); vw(IBO + 4, 0x00100500); vw(IBO + 8, (uint32_t)tva); vw(IBO + 12, (uint32_t)(tva >> 32)); vw(IBO + 16, 0x1BADB002);
+   if (env_on("VM8_IBSYS")) {   // same IB, but in the system page the PTE points at
+      const uint32_t ibw[5] = {0xC0033700, 0x00100500, (uint32_t)tva, (uint32_t)(tva >> 32), 0x1BADB002};
+      for (int i = 0; i < 5; i++) sm(3, 0x20000 + i * 4, ibw[i], &d0, &d1);
+   }
+   vw(TGO, 0);
+   uint32_t b = 8;
+   vw(CMP_RING + b * 4 + 0, 0xC0023F00); vw(CMP_RING + b * 4 + 4, (uint32_t)ibva); vw(CMP_RING + b * 4 + 8, (uint32_t)(ibva >> 32));
+   vw(CMP_RING + b * 4 + 12, 5 | (1u << 23) | ((uint32_t)vmid << 24));   // IB_SIZE | VALID | VMID
+   b += 4;
+   // GL2 writeback+invalidate so the IB's write leaves the GPU cache (same ACQUIRE_MEM as the working GART test)
+   vw(CMP_RING + b * 4 + 0, 0xC0065800); vw(CMP_RING + b * 4 + 4, 0);
+   vw(CMP_RING + b * 4 + 8, 0xFFFFFFFF); vw(CMP_RING + b * 4 + 12, 0x00FFFFFF);
+   vw(CMP_RING + b * 4 + 16, 0); vw(CMP_RING + b * 4 + 20, 0);
+   vw(CMP_RING + b * 4 + 24, 0x0A); vw(CMP_RING + b * 4 + 28, 0xC000);
+   b += 8;
+   // RELEASE_MEM fence exactly as the kext emits it -> MC 0x2550000
+   vw(0x2550000, 0); vw(0x2550004, 0);
+   { const uint64_t fm = MC(0x2550000ull); const uint32_t rm[8] = {0xC0064900, 0x06603514, 0x40000000, (uint32_t)fm, (uint32_t)(fm >> 32), 0x77, 0, 0};
+     for (int i = 0; i < 8; i++) vw(CMP_RING + (b + i) * 4, rm[i]); b += 8; }
+   vw(CMP_WB + 16, b); vw(CMP_WB + 20, 0); db(6 * 4, b);
+   const int tsys = env_on("VM8_SYS");
+   uint64_t sv = 0;
+   for (int i = 0; i < 50; i++) { usleep(10000); if (tsys) { uint64_t pp; sm(2, 0x10000, 0, &pp, &sv); if ((uint32_t)sv == 0x1BADB002) break; } else if (vr(TGO) == 0x1BADB002) break; }
+   if (tsys) printf("vm8 SYSTEM target: 0x%08x (want 1badb002)\n", (uint32_t)sv);
+   grbm_select(1, 0, 0, 0);
+   printf("vm8 RELEASE_MEM fence = 0x%08x (want 77)\n", vr(0x2550000));
+   printf("vm8 test (mtype %u): target=0x%08x (want 1badb002) rptr=%u fault=0x%x addr=0x%x:%x\n", mt, vr(TGO), rd(SEG0(0x1fb3)), rd(SEG0(0x15c8)), rd(SEG0(0x15ca)), rd(SEG0(0x15c9)));
+   grbm_select(0, 0, 0, 0);
 }
 
 static void sched_test(void)
@@ -437,7 +570,7 @@ static void sched_test(void)
    q.header.opcode = MES_SCH_API_QUERY_SCHEDULER_STATUS;
    q.header.dwsize = API_FRAME_SIZE_IN_DWORDS;
    mes_submit(&q, sizeof(q), offsetof(union MESAPI__QUERY_MES_STATUS, api_status), "QUERY_SCHED_STATUS");
-   if (getenv("MESBOOT_CS")) compute_via_mes();
+   if (env_on("MESBOOT_CS")) compute_via_mes();
 }
 
 #define MEC_RING 0x2530000ull
@@ -501,6 +634,37 @@ static void kiqreg_test(void)
    grbm_select(0, 0, 0, 0);
 }
 
+// SDMA0 queue0: WRITE_LINEAR of one dword to an arbitrary 64-bit address (ring in VRAM at 0x2000000, MC addressed)
+static void sdma_write(uint64_t dst, uint32_t val)
+{
+   const uint64_t ring = 0x2000000ull;
+   for (int i = 0; i < 8; i++) vw(ring + i * 4, 0);
+   vw(ring + 0, 0x00000002); vw(ring + 4, (uint32_t)dst); vw(ring + 8, (uint32_t)(dst >> 32)); vw(ring + 12, 0); vw(ring + 16, val);
+   wr(0x12E0, 0x00040800);
+   wr(0x12E3, 0); wr(0x12E4, 0); wr(0x12E5, 0); wr(0x12E6, 0);
+   wr(0x1313, 0x02001010); wr(0x1312, 0x80); wr(0x12E8, 0x80); wr(0x12E9, 0x02001000);
+   wr(0x12E0, 0x00841814); wr(0x12E1, 0x80020000); wr(0x12E2, 0);
+   wr(0x1315, 1); wr(0x12E5, 0); wr(0x12E6, 0); wr(0x1315, 0);
+   wr(0xF89A, 0x08084000);
+   wr(0x12E0, 0x00841815); wr(0x12EA, 0x101);
+   vw(0x2001010, 0x14);
+   wr(0x1315, 1); wr(0x12E5, 0x14); wr(0x12E6, 0); wr(0x1315, 0);
+   usleep(200000);
+}
+static void sdma_sys_test(void)
+{
+   uint64_t phys = 0, len = 0, v = 0;
+   if (sm(1, 1 << 20, 0, &phys, &len)) { printf("sysmem alloc failed\n"); return; }
+   // MMHUB AGP aperture identity (BASE=0, BOT=0, TOP=0x1ff): MC address == system physical address for SDMA
+   wr(0x1a8f0, 0); wr(0x1a8ef, 0); wr(0x1a8ee, 0x000001ff);
+   uint64_t tgt = phys + 0x1000;
+   sdma_write(tgt, 0x5D5D5D5D);
+   uint64_t pp; sm(2, 0x1000, 0, &pp, &v);
+   printf("SDMA write to system phys 0x%llx via MMHUB AGP: 0x%08x (want 5d5d5d5d)\n", (unsigned long long)tgt, (uint32_t)v);
+   sdma_write(MC(TESTBUF + 0x200), 0x6E6E6E6E);
+   printf("SDMA control write to VRAM: 0x%08x (want 6e6e6e6e)\n", vr(TESTBUF + 0x200));
+}
+
 int main(int argc, char **argv)
 {
    if (open_kext()) return 1;
@@ -513,6 +677,7 @@ int main(int argc, char **argv)
    if (all || !strcmp(argv[1], "mes")) mes_start();
    if (!strcmp(argv[1], "kiqdb")) { use_db = 1; kiq_test(); }
    if (!strcmp(argv[1], "kiqsched")) { kiq_init_only(); sched_test(); }
+   if (!strcmp(argv[1], "sdmasys")) sdma_sys_test();
    if (!strcmp(argv[1], "kiqreg")) kiqreg_test();
    if (!strcmp(argv[1], "mec")) mec_test();
    if (!strcmp(argv[1], "sched")) sched_test();

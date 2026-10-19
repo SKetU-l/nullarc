@@ -57,6 +57,7 @@ enum {
     PHXN_SEL_DBG_WRITE_REG = 108,  /* in: [0] absolute dword register [1] value; writes MMIO. out[0] = readback.
                                       Ring/engine bring-up experimentation (root + phxdebug). */
     PHXN_SEL_DBG_VRAM_WRITE = 109, /* in: [0] VRAM byte offset (dword-aligned) [1] dword value; writes via BAR0. */
+    PHXN_SEL_DBG_ADOPTQ = 112,     /* in: [0] ring VRAM off [1] ring dwords [2] wb VRAM off (wptr shadow at +16) [3] doorbell byte off [4] wptr [5] fence VRAM off */
     PHXN_SEL_DBG_SYSMEM = 111,     /* in: [0] op (1 alloc [1] bytes, 2 read [1] off, 3 write [1] off [2] val, 4 free)  out: [0] phys  [1] len/value */
     PHXN_SEL_DBG_DOORBELL = 110,   /* in: [0] doorbell BAR2 byte offset (8-aligned) [1] value lo [2] value hi; writes a 64-bit doorbell. */
 };
@@ -156,6 +157,7 @@ enum {
 #define PHX_AMDGPU_CTX_OP_FREE_CTX     2u
 #define PHX_AMDGPU_CTX_OP_QUERY_STATE2 4u
 #define PHX_AMDGPU_HW_IP_GFX 0u
+#define PHX_AMDGPU_HW_IP_COMPUTE 1u
 #define PHX_AMDGPU_IB_FLAG_CE                     (1u << 0)
 #define PHX_AMDGPU_IB_FLAG_PREAMBLE               (1u << 1)
 #define PHX_AMDGPU_IB_FLAG_PREEMPT                (1u << 2)
