@@ -80,5 +80,6 @@ While direct physical system aperture (`0x80_...`) operations execute flawlessly
 ## 👥 Authors & Collaborators
 * **Lead Maintainer & Systems / Hardware Testing:** [@luuumi-dev](https://github.com/luuumi-dev)
 * **Kernel & Low-Level AI Systems Engineering:** Anthropic Claude & Google DeepMind Gemini (Antigravity)
+* **Pioneering macOS AMD GPU Research & Architecture:** [Cobalt64](https://cobalt64.com) & **nullmoth**
 * **Hardware Architecture & Reference:** AMD Linux Kernel (`amdgpu` driver team) & Mesa 3D Project (RADV team)
 * **macOS Kernel & OpenCore Community:** [Acidanthera](https://github.com/acidanthera) & AMD-OSX
