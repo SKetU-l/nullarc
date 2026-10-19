@@ -21,7 +21,7 @@
 
 #include "PhxNativeABI.h"
 
-#define PHX_KEXT_BUILD 20u
+#define PHX_KEXT_BUILD 21u
 
 // psp_gfx_rb_frame (64 B) — the ring entry the PSP reads. Only 5 fields are set; the rest stay zero
 // (Linux amdgpu_psp.c:3485: a non-zero cmd_buf_size makes the PSP silently drop the frame).
@@ -571,8 +571,11 @@ IOReturn PhxBringup::gpuSubmit(const uint64_t *ibVa, const uint32_t *ibDw, uint3
     uint32_t k = 0;
     for (uint32_t i = 0; i < n; i++) {
         ringPut(k++, 0xC0023F00);                                  // INDIRECT_BUFFER
-        ringPut(k++, static_cast<uint32_t>(ibVa[i]) & ~3u);
-        ringPut(k++, static_cast<uint32_t>(ibVa[i] >> 32) & 0xFFFF);
+        // the CP wants the canonical (sign-extended) address: an upper-half IB (bit 47, where RADV puts them) with a
+        // bare 16-bit high word silently wedges the queue
+        const uint64_t cva = (ibVa[i] & (1ull << 47)) ? (ibVa[i] | 0xFFFF000000000000ull) : ibVa[i];
+        ringPut(k++, static_cast<uint32_t>(cva) & ~3u);
+        ringPut(k++, static_cast<uint32_t>(cva >> 32));
         ringPut(k++, ibDw[i] | (1u << 23) | (kUserVmid << 24));    // size | VALID | VMID
     }
     const uint64_t seq = ++gq.emitted;
