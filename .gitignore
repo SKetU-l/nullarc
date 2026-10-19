@@ -1,5 +1,7 @@
 # Temp / Agent artifacts
 .omo/
+.slim/
+.current_notepad
 .DS_Store
 ._*
 *.o
@@ -9,3 +11,5 @@ build/
 dist/
 __pycache__/
 *.pyc
+reference/
+tests/test_*

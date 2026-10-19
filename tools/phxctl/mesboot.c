@@ -364,7 +364,7 @@ static void compute_via_mes(void)
       const uint64_t vaoff = 0x7F00000;
       const int vram_t = getenv("MESBOOT_VMT")[0] == '2';
       if (vram_t) phys = FB_PA + 0x2600000ull;
-      uint32_t wp = 13, hit = 0;
+      uint32_t wp = 8, hit = 0;
       static const uint64_t lowf[] = {0x77, 0x71, 0x73, 0x75, 0x7f};
       for (int mt = 0; mt < 5; mt++) {
          for (int fl = 0; fl < 5; fl++) {
