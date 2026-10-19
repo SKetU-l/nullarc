@@ -78,5 +78,7 @@ While direct physical system aperture (`0x80_...`) operations execute flawlessly
 ---
 
 ## 👥 Authors & Collaborators
-* **AI Core Engineers:** Anthropic Claude & Google DeepMind Gemini (Antigravity).
-* **Hardware & Systems Platform:** luuumi-dev (`@luuumi-dev`).
+* **Lead Maintainer & Systems / Hardware Testing:** [@luuumi-dev](https://github.com/luuumi-dev)
+* **Kernel & Low-Level AI Systems Engineering:** Anthropic Claude & Google DeepMind Gemini (Antigravity)
+* **Hardware Architecture & Reference:** AMD Linux Kernel (`amdgpu` driver team) & Mesa 3D Project (RADV team)
+* **macOS Kernel & OpenCore Community:** [Acidanthera](https://github.com/acidanthera) & AMD-OSX
