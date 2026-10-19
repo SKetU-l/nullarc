@@ -21,7 +21,7 @@
 
 #include "PhxNativeABI.h"
 
-#define PHX_KEXT_BUILD 21u
+#define PHX_KEXT_BUILD 23u
 
 // psp_gfx_rb_frame (64 B) — the ring entry the PSP reads. Only 5 fields are set; the rest stay zero
 // (Linux amdgpu_psp.c:3485: a non-zero cmd_buf_size makes the PSP silently drop the frame).
@@ -75,13 +75,14 @@ public:
     IOReturn pspCtl(uint32_t op, uint32_t arg, uint64_t out[4]);
     IOReturn pspRaw(uint32_t cmdId, const uint32_t words[6], uint64_t out[4]);
     bool debugEnabled() const { return debug; }
-    // E8: GPU execution. The userspace bring-up maps a MES compute queue and hands it over (adoptQueue); user BOs are
-    // then mapped into the VMID 8 page table and SUBMIT writes INDIRECT_BUFFERs into that ring.
+    // E8: GPU execution. The userspace bring-up maps MES queues (compute = 0, gfx = 1) and hands them over (adoptQueue);
+    // user BOs are then mapped into the VMID 8 page table and SUBMIT writes INDIRECT_BUFFERs into the queue's ring.
     IOReturn adoptQueue(const uint64_t in[6]);
-    bool gpuReady() const { return gq.ready; }
+    IOReturn claimAccel();
+    bool gpuReady() const { return gq[0].ready || gq[1].ready; }
     IOReturn vmMap(uint64_t va, IOMemoryDescriptor *md, uint64_t off, uint64_t size);
     IOReturn vmUnmap(uint64_t va, uint64_t size);
-    IOReturn gpuSubmit(const uint64_t *ibVa, const uint32_t *ibDw, uint32_t n, uint64_t *seq);
+    IOReturn gpuSubmit(bool gfx, const uint64_t *ibVa, const uint32_t *ibDw, uint32_t n, uint64_t *seq);
     uint64_t gpuRetired() const;
 
 private:
@@ -118,15 +119,21 @@ private:
     uint64_t tmrOff{0}, tmrMc{0}, tmrSize{0};
     uint64_t fwBufOff{0}, fwBufMc{0}, fwBufSize{0};
     bool tmrSetUp{false};
-    // E8 state: the adopted compute queue (ring/wb/fence are VRAM byte offsets reached through BAR0) and the VMID 8
-    // page-table pool (physically contiguous system memory; page 0 is the root).
+    // E8 state: the adopted queues (ring/wb/fence are VRAM byte offsets reached through BAR0) and the VMID 8
+    // page-table pool (physically contiguous system memory; page 0 is the root). Sequence numbers are global across
+    // the queues; each queue's fence holds the last sequence it finished, and fseq/fend keep its outstanding
+    // submissions in order (sequence, ring position after it).
     struct GpuQueue {
-        bool ready;
+        bool ready, gfx;
         uint32_t ringOff, ringDw, wbOff, fenceOff;
-        uint64_t dbByte, wptr, emitted;
-        uint64_t endWptr[64];
+        uint64_t dbByte, wptr, doneEnd;
+        uint64_t fseq[64], fend[64];
+        volatile uint32_t head, tail;
     };
-    GpuQueue gq{};
+    GpuQueue gq[2]{};
+    uint64_t gSeq{0};
+    bool vmReady{false};
+    uint64_t queueFence(const GpuQueue &q) const;
     IOLock *gpuLock{nullptr};
     IOBufferMemoryDescriptor *ptPool{nullptr};
     uint64_t ptPhys{0};
@@ -134,7 +141,7 @@ private:
     uint64_t *ptTable(uint64_t phys) const;
     uint64_t *vmPte(uint64_t va, bool alloc);
     void vmFlushTlb() const;
-    void ringPut(uint32_t idx, uint32_t value);
+    void ringPut(GpuQueue &q, uint32_t idx, uint32_t value);
     bool debug{false};
     bool smuUsed{false};
     volatile SInt32 sessionOpen{0};
@@ -189,6 +196,7 @@ private:
     IOReturn doDbgDoorbell(IOExternalMethodArguments *a);
     IOReturn doDbgSysMem(IOExternalMethodArguments *a);
     IOReturn doDbgAdoptQueue(IOExternalMethodArguments *a);
+    IOReturn doDbgClaim(IOExternalMethodArguments *a);
     void flushBos();
     Bo *findBo(uint32_t h);
     bool ibCovered(uint64_t vaCanon, uint64_t bytes);
@@ -270,7 +278,8 @@ void PhxBringup::stop(IOService *provider) {
         sysBuf->release();
         sysBuf = nullptr;
     }
-    gq.ready = false;
+    gq[0].ready = gq[1].ready = false;
+    vmReady = false;
     if (ptPool) {
         ptPool->release();
         ptPool = nullptr;
@@ -451,7 +460,9 @@ void PhxBringup::vmFlushTlb() const {
 IOReturn PhxBringup::adoptQueue(const uint64_t in[6]) {
     if (!fbAper || !doorbellMap || !mmio || !fbMcBase || !gpuLock)
         return kIOReturnNotReady;
-    const uint64_t ringOff = in[0], ringDw = in[1], wbOff = in[2], dbByte = in[3], wptr = in[4], fenceOff = in[5];
+    // in[5] = fence offset | queue index (0 compute, 1 gfx): the fence is 8-byte aligned, so bit 0 is free
+    const uint64_t ringOff = in[0], ringDw = in[1], wbOff = in[2], dbByte = in[3], wptr = in[4], fenceOff = in[5] & ~1ull;
+    const uint32_t qi = static_cast<uint32_t>(in[5] & 1);
     if (ringDw < 256 || ringDw > 65536 || (ringDw & (ringDw - 1)) || (ringOff & 0xFF) ||
         ringOff + ringDw * 4 > fbAperLen || (wbOff & 7) || wbOff + 32 > fbAperLen || (fenceOff & 7) ||
         fenceOff + 8 > fbAperLen || (dbByte & 7) || dbByte + 8 > doorbellMap->getLength())
@@ -467,41 +478,55 @@ IOReturn PhxBringup::adoptQueue(const uint64_t in[6]) {
         ptPhys = ptPool->getPhysicalAddress();
         ptPages = kPtPoolBytes / 4096;
     }
-    uint8_t *pool = static_cast<uint8_t *>(ptPool->getBytesNoCopy());
-    bzero(pool, kPtPoolBytes);
-    for (uint32_t o = 0; o < kPtPoolBytes; o += 64)
-        flushLine(pool + o);
-    ptUsed = 1;
-    wreg(kRegCtx8BaseLo, static_cast<uint32_t>(ptPhys | 3));
-    wreg(kRegCtx8BaseHi, static_cast<uint32_t>(ptPhys >> 32));
-    wreg(kRegCtx8Cntl, 0x01fffe07);
-    wreg(kRegCtx8StartLo, 0);
-    wreg(kRegCtx8StartHi, 0);
-    wreg(kRegCtx8EndLo, 0xffffffff);
-    wreg(kRegCtx8EndHi, 0xf);
-    vmFlushTlb();
-    bzero(&gq, sizeof(gq));
-    gq.ringOff = static_cast<uint32_t>(ringOff);
-    gq.ringDw = static_cast<uint32_t>(ringDw);
-    gq.wbOff = static_cast<uint32_t>(wbOff);
-    gq.fenceOff = static_cast<uint32_t>(fenceOff);
-    gq.dbByte = dbByte;
-    gq.wptr = wptr;
-    for (int i = 0; i < 64; i++)
-        gq.endWptr[i] = wptr;
+    if (!vmReady) {   // the VMID 8 context is shared by the queues: set it up once
+        uint8_t *pool = static_cast<uint8_t *>(ptPool->getBytesNoCopy());
+        bzero(pool, kPtPoolBytes);
+        for (uint32_t o = 0; o < kPtPoolBytes; o += 64)
+            flushLine(pool + o);
+        ptUsed = 1;
+        wreg(kRegCtx8BaseLo, static_cast<uint32_t>(ptPhys | 3));
+        wreg(kRegCtx8BaseHi, static_cast<uint32_t>(ptPhys >> 32));
+        wreg(kRegCtx8Cntl, 0x01fffe07);
+        wreg(kRegCtx8StartLo, 0);
+        wreg(kRegCtx8StartHi, 0);
+        wreg(kRegCtx8EndLo, 0xffffffff);
+        wreg(kRegCtx8EndHi, 0xf);
+        vmFlushTlb();
+        vmReady = true;
+    }
+    GpuQueue &q = gq[qi];
+    bzero(&q, sizeof(q));
+    q.gfx = qi == 1;
+    q.ringOff = static_cast<uint32_t>(ringOff);
+    q.ringDw = static_cast<uint32_t>(ringDw);
+    q.wbOff = static_cast<uint32_t>(wbOff);
+    q.fenceOff = static_cast<uint32_t>(fenceOff);
+    q.dbByte = dbByte;
+    q.wptr = q.doneEnd = wptr;
     volatile uint32_t *fence = reinterpret_cast<volatile uint32_t *>(fbAper->getVirtualAddress() + fenceOff);
-    fence[0] = 0;
-    fence[1] = 0;
+    fence[0] = static_cast<uint32_t>(gSeq);
+    fence[1] = static_cast<uint32_t>(gSeq >> 32);
     hdpFlush();
-    gq.ready = true;
+    q.ready = true;
     IOLockUnlock(gpuLock);
-    IOLog("PhxBringup: adopted compute queue ring=+0x%llx (%llu dw) wptr=%llu doorbell=+0x%llx, VMID %u table @0x%llx\n",
-          ringOff, ringDw, wptr, dbByte, kUserVmid, ptPhys);
+    IOLog("PhxBringup: adopted %s queue ring=+0x%llx (%llu dw) wptr=%llu doorbell=+0x%llx, VMID %u table @0x%llx\n",
+          qi ? "gfx" : "compute", ringOff, ringDw, wptr, dbByte, kUserVmid, ptPhys);
+    return kIOReturnSuccess;
+}
+
+// PhxAccel (the NullMoth accelerator in its AMD configuration) starts only on a GPU marked as driven; matching is
+// re-run so the accelerator personality, refused at boot, is offered the device again.
+IOReturn PhxBringup::claimAccel() {
+    if (!pci || !gpuReady())
+        return kIOReturnNotReady;
+    pci->setProperty("nmxgpu-claimed", kOSBooleanTrue);
+    pci->registerService();
+    IOLog("PhxBringup: GPU claimed for PhxAccel, matching re-run\n");
     return kIOReturnSuccess;
 }
 
 IOReturn PhxBringup::vmMap(uint64_t va, IOMemoryDescriptor *md, uint64_t off, uint64_t size) {
-    if (!gq.ready)
+    if (!vmReady)
         return kIOReturnNotReady;
     IOReturn r = kIOReturnSuccess;
     IOLockLock(gpuLock);
@@ -522,7 +547,7 @@ IOReturn PhxBringup::vmMap(uint64_t va, IOMemoryDescriptor *md, uint64_t off, ui
 }
 
 IOReturn PhxBringup::vmUnmap(uint64_t va, uint64_t size) {
-    if (!gq.ready)
+    if (!vmReady)
         return kIOReturnNotReady;
     IOLockLock(gpuLock);
     for (uint64_t p = 0; p < size; p += 4096) {
@@ -537,30 +562,54 @@ IOReturn PhxBringup::vmUnmap(uint64_t va, uint64_t size) {
     return kIOReturnSuccess;
 }
 
-void PhxBringup::ringPut(uint32_t idx, uint32_t value) {
-    const uint64_t slot = (gq.wptr + idx) & (gq.ringDw - 1);
-    *reinterpret_cast<volatile uint32_t *>(fbAper->getVirtualAddress() + gq.ringOff + slot * 4) = value;
+void PhxBringup::ringPut(GpuQueue &q, uint32_t idx, uint32_t value) {
+    const uint64_t slot = (q.wptr + idx) & (q.ringDw - 1);
+    *reinterpret_cast<volatile uint32_t *>(fbAper->getVirtualAddress() + q.ringOff + slot * 4) = value;
 }
 
-uint64_t PhxBringup::gpuRetired() const {
-    if (!gq.ready)
-        return 0;
-    const volatile uint32_t *f = reinterpret_cast<const volatile uint32_t *>(fbAper->getVirtualAddress() + gq.fenceOff);
+uint64_t PhxBringup::queueFence(const GpuQueue &q) const {
+    const volatile uint32_t *f = reinterpret_cast<const volatile uint32_t *>(fbAper->getVirtualAddress() + q.fenceOff);
     return static_cast<uint64_t>(f[0]) | (static_cast<uint64_t>(f[1]) << 32);
 }
 
-IOReturn PhxBringup::gpuSubmit(const uint64_t *ibVa, const uint32_t *ibDw, uint32_t n, uint64_t *seqOut) {
-    if (!gq.ready)
+// Everything up to the returned sequence has finished: the oldest submission still running on any queue, minus one.
+// Lock-free reader: an entry is written before `tail` moves past it.
+uint64_t PhxBringup::gpuRetired() const {
+    uint64_t r = gSeq;
+    for (const GpuQueue &q : gq) {
+        if (!q.ready)
+            continue;
+        const uint64_t done = queueFence(q);
+        const uint32_t tail = q.tail;
+        for (uint32_t i = q.head; i != tail; i++) {
+            if (q.fseq[i & 63] > done) {
+                if (q.fseq[i & 63] - 1 < r)
+                    r = q.fseq[i & 63] - 1;
+                break;
+            }
+        }
+    }
+    return r;
+}
+
+IOReturn PhxBringup::gpuSubmit(bool gfx, const uint64_t *ibVa, const uint32_t *ibDw, uint32_t n, uint64_t *seqOut) {
+    // graphics IBs go to the gfx queue and compute IBs to the compute queue; with one of them missing, the other runs both
+    GpuQueue *qp = gfx ? (gq[1].ready ? &gq[1] : &gq[0]) : (gq[0].ready ? &gq[0] : &gq[1]);
+    if (!qp->ready)
         return kIOReturnNotReady;
+    GpuQueue &q = *qp;
     const uint32_t need = n * 4 + 8;
-    if (need + 16 > gq.ringDw)
+    if (need + 16 > q.ringDw)
         return kIOReturnBadArgument;
     IOLockLock(gpuLock);
-    // Ring space and the 64-entry history: wait for the oldest outstanding submission if needed (bounded, ~2 s).
+    // Ring space and the 64-entry history: retire finished entries, wait for the oldest one if needed (bounded, ~2 s).
     for (int spin = 0;; spin++) {
-        const uint64_t retired = gpuRetired();
-        const uint64_t floor = gq.endWptr[retired & 63];
-        if (gq.emitted - retired < 63 && gq.wptr + need - floor <= gq.ringDw - 16)
+        const uint64_t done = queueFence(q);
+        while (q.head != q.tail && q.fseq[q.head & 63] <= done) {
+            q.doneEnd = q.fend[q.head & 63];
+            q.head++;
+        }
+        if (q.tail - q.head < 63 && q.wptr + need - q.doneEnd <= q.ringDw - 16)
             break;
         if (spin > 40000) {
             IOLockUnlock(gpuLock);
@@ -570,38 +619,42 @@ IOReturn PhxBringup::gpuSubmit(const uint64_t *ibVa, const uint32_t *ibDw, uint3
     }
     uint32_t k = 0;
     for (uint32_t i = 0; i < n; i++) {
-        ringPut(k++, 0xC0023F00);                                  // INDIRECT_BUFFER
+        ringPut(q, k++, 0xC0023F00);                               // INDIRECT_BUFFER
         // the CP wants the canonical (sign-extended) address: an upper-half IB (bit 47, where RADV puts them) with a
         // bare 16-bit high word silently wedges the queue
         const uint64_t cva = (ibVa[i] & (1ull << 47)) ? (ibVa[i] | 0xFFFF000000000000ull) : ibVa[i];
-        ringPut(k++, static_cast<uint32_t>(cva) & ~3u);
-        ringPut(k++, static_cast<uint32_t>(cva >> 32));
-        ringPut(k++, ibDw[i] | (1u << 23) | (kUserVmid << 24));    // size | VALID | VMID
+        ringPut(q, k++, static_cast<uint32_t>(cva) & ~3u);
+        ringPut(q, k++, static_cast<uint32_t>(cva >> 32));
+        // size | VMID, plus VALID on compute (gfx_v11_0_ring_emit_ib_compute; the gfx variant has no VALID bit)
+        ringPut(q, k++, ibDw[i] | (q.gfx ? 0u : (1u << 23)) | (kUserVmid << 24));
     }
-    const uint64_t seq = ++gq.emitted;
-    const uint64_t fenceMc = fbMcBase + gq.fenceOff;
-    ringPut(k++, 0xC0064900);                                      // RELEASE_MEM, as gfx_v11_0_ring_emit_fence
-    ringPut(k++, 0x06603514);                                      // GCR SEQ|GL2_WB|GLM_INV|GLM_WB, CP 3, CACHE_FLUSH_AND_INV_TS, idx 5
-    ringPut(k++, 0x40000000);                                      // DATA_SEL 2 (64-bit), no interrupt
-    ringPut(k++, static_cast<uint32_t>(fenceMc));
-    ringPut(k++, static_cast<uint32_t>(fenceMc >> 32));
-    ringPut(k++, static_cast<uint32_t>(seq));
-    ringPut(k++, static_cast<uint32_t>(seq >> 32));
-    ringPut(k++, 0);
-    gq.wptr += k;
-    gq.endWptr[seq & 63] = gq.wptr;
+    const uint64_t seq = ++gSeq;
+    const uint64_t fenceMc = fbMcBase + q.fenceOff;
+    ringPut(q, k++, 0xC0064900);                                   // RELEASE_MEM, as gfx_v11_0_ring_emit_fence
+    ringPut(q, k++, 0x06603514);                                   // GCR SEQ|GL2_WB|GLM_INV|GLM_WB, CP 3, CACHE_FLUSH_AND_INV_TS, idx 5
+    ringPut(q, k++, 0x40000000);                                   // DATA_SEL 2 (64-bit), no interrupt
+    ringPut(q, k++, static_cast<uint32_t>(fenceMc));
+    ringPut(q, k++, static_cast<uint32_t>(fenceMc >> 32));
+    ringPut(q, k++, static_cast<uint32_t>(seq));
+    ringPut(q, k++, static_cast<uint32_t>(seq >> 32));
+    ringPut(q, k++, 0);
+    q.wptr += k;
+    q.fseq[q.tail & 63] = seq;
+    q.fend[q.tail & 63] = q.wptr;
+    __asm__ __volatile__("" ::: "memory");
+    q.tail = q.tail + 1;
     // BAR0 is write-combined: drain the WC buffers so the packets are in VRAM before the CP is told about them
     __asm__ __volatile__("sfence" ::: "memory");
-    (void)*reinterpret_cast<volatile uint32_t *>(fbAper->getVirtualAddress() + gq.ringOff);
+    (void)*reinterpret_cast<volatile uint32_t *>(fbAper->getVirtualAddress() + q.ringOff);
     hdpFlush();
-    volatile uint32_t *wb = reinterpret_cast<volatile uint32_t *>(fbAper->getVirtualAddress() + gq.wbOff + 16);
-    wb[0] = static_cast<uint32_t>(gq.wptr);
-    wb[1] = static_cast<uint32_t>(gq.wptr >> 32);
+    volatile uint32_t *wb = reinterpret_cast<volatile uint32_t *>(fbAper->getVirtualAddress() + q.wbOff + 16);
+    wb[0] = static_cast<uint32_t>(q.wptr);
+    wb[1] = static_cast<uint32_t>(q.wptr >> 32);
     __asm__ __volatile__("sfence" ::: "memory");
     (void)wb[0];
     hdpFlush();
     __asm__ __volatile__("mfence" ::: "memory");
-    *reinterpret_cast<volatile uint64_t *>(doorbellMap->getVirtualAddress() + gq.dbByte) = gq.wptr;
+    *reinterpret_cast<volatile uint64_t *>(doorbellMap->getVirtualAddress() + q.dbByte) = q.wptr;
     IOLockUnlock(gpuLock);
     *seqOut = seq;
     return kIOReturnSuccess;
@@ -1061,6 +1114,7 @@ IOReturn IOAccelPhxNativeClient::externalMethod(uint32_t selector, IOExternalMet
         case PHXN_SEL_DBG_DOORBELL: r = doDbgDoorbell(a); break;
         case PHXN_SEL_DBG_SYSMEM: r = doDbgSysMem(a); break;
         case PHXN_SEL_DBG_ADOPTQ: r = doDbgAdoptQueue(a); break;
+        case PHXN_SEL_DBG_CLAIM: r = doDbgClaim(a); break;
         default:                 r = kIOReturnBadArgument; break;
         }
     }
@@ -1393,7 +1447,9 @@ IOReturn IOAccelPhxNativeClient::doSubmit(IOExternalMethodArguments *a) {
         }
         flushBos();
         uint64_t seq = 0;
-        const IOReturn r = owner->gpuSubmit(va, dw, h.num_ibs, &seq);
+        phxn_cs_ib ib0;
+        bcopy(in + sizeof(h), &ib0, sizeof(ib0));
+        const IOReturn r = owner->gpuSubmit(ib0.ip_type == PHX_AMDGPU_HW_IP_GFX, va, dw, h.num_ibs, &seq);
         if (r != kIOReturnSuccess)
             return r;
         emitted = seq;   // externalMethod already holds `lock`
@@ -1593,6 +1649,16 @@ IOReturn IOAccelPhxNativeClient::doDbgAdoptQueue(IOExternalMethodArguments *a) {
     if (!shape(a, 6, 0, 0, 0))
         return kIOReturnBadArgument;
     return owner->adoptQueue(a->scalarInput);
+}
+
+IOReturn IOAccelPhxNativeClient::doDbgClaim(IOExternalMethodArguments *a) {
+    if (!owner->debugEnabled())
+        return kIOReturnUnsupported;
+    if (!privileged)
+        return kIOReturnNotPrivileged;
+    if (!shape(a, 1, 0, 0, 0) || a->scalarInput[0] != 1)
+        return kIOReturnBadArgument;
+    return owner->claimAccel();
 }
 
 // Write back and invalidate the CPU caches over every BO: CPU-written data must be in memory before the GPU reads
