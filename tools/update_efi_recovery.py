@@ -37,4 +37,4 @@ def patch_config(path):
 
 if __name__ == "__main__":
     patch_config("hardware/efi_firebat_u6c_simplify/EFI/OC/config.plist")
-    patch_config("/run/media/luuumi-dev/OPENCORE/EFI/OC/config.plist")
+    patch_config("/Volumes/OPENCORE/EFI/OC/config.plist")

@@ -3,7 +3,7 @@ import sys
 import base64
 import subprocess
 
-def run_ps(cmd: str, host: str = "дрипсайд@192.168.31.65"):
+def run_ps(cmd: str, host: str = os.environ.get("TARGET_HOST", "user@localhost")):
     b64 = base64.b64encode(cmd.encode("utf-16le")).decode("ascii")
     proc = subprocess.run(
         ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", host, f"powershell -NoProfile -EncodedCommand {b64}"],

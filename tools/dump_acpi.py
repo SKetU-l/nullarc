@@ -62,6 +62,6 @@ foreach ($tbl in @({", ".join([f'"{t}"' for t in tables])})) {{
     return True
 
 if __name__ == "__main__":
-    host = "дрипсайд@192.168.31.65"
+    host = os.environ.get("TARGET_HOST", "user@localhost")
     target_dir = sys.argv[1] if len(sys.argv) > 1 else "hardware/dumps/firebat_u6c/acpi"
     dump_acpi_tables(host, target_dir)
