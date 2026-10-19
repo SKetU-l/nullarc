@@ -401,6 +401,9 @@ static void compute_via_mes(void)
          wp += 6; vw(CMP_WB + 16, wp); db(6 * 4, wp); usleep(200000);
          printf("GART read test: testbuf+8 = 0x%08x (want c0ffee11)\n", vr(TESTBUF + 8));
       }
+      grbm_select(1, 0, 0, 0);
+      printf("compute rptr=%u wptr_written=%u fault status=0x%x addr=0x%x:%x\n", rd(SEG0(0x1fb3)), wp, rd(SEG0(0x15c8)), rd(SEG0(0x15ca)), rd(SEG0(0x15c9)));
+      grbm_select(0, 0, 0, 0);
       printf("system-memory write via GART: %u hits of 25 variants (value=0x%08x)\n", hit, hit ? 0xabcd1234 : 0);
    }
 }
