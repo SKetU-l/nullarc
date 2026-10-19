@@ -146,3 +146,10 @@ F32_CNTL(0xF89A)=0x08084000 (unhalt), RB_CNTL=0x841815, IB_CNTL=0x101. Адре�
 * **Создание устройства и шейдеры**: `VkDevice` создан, compute pipeline скомпилирован через ACO (`fill.comp` SPIR-V), командный буфер передан на видеокарту (`RPTR = 0x18, WPTR = 0x18`).
 * **Окружение**: macOS Tahoe (Darwin 25.x).
 
+
+## E8 — vkprobe 256/256 на реальном 780M (2026-10-20)
+RADV (ACO) -> kext (build 21) -> MES-очередь MEC -> GPU: вычислительный шейдер выполнен, результат верный.
+kext: приём очереди (селектор 112), таблица VMID 8 в системной памяти, SUBMIT = INDIRECT_BUFFER(VMID 8) + RELEASE_MEM.
+Ловушки: старшее слово адреса IB — со знаковым расширением (0xffff8001), sfence перед doorbell (BAR0 = write-combining), clflush буферов.
+Запуск сейчас вручную: чистая загрузка -> `MC=1 CS=1 ADOPT=1 bash ~/gpu/full.sh kiqsched` -> Vulkan-приложение.
+Дальше: графическая очередь (MES ADD_QUEUE GFX), автозапуск при загрузке, затем Metal-плагин.
