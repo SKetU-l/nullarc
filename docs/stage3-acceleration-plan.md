@@ -153,3 +153,15 @@ kext: приём очереди (селектор 112), таблица VMID 8 в
 Ловушки: старшее слово адреса IB — со знаковым расширением (0xffff8001), sfence перед doorbell (BAR0 = write-combining), clflush буферов.
 Запуск сейчас вручную: чистая загрузка -> `MC=1 CS=1 ADOPT=1 bash ~/gpu/full.sh kiqsched` -> Vulkan-приложение.
 Дальше: графическая очередь (MES ADD_QUEUE GFX), автозапуск при загрузке, затем Metal-плагин.
+
+- **E9 — ГРАФИЧЕСКАЯ ОЧЕРЕДЬ, 2026-10-20:** GFX-очередь (me0 pipe0 q0) поставлена через MES ADD_QUEUE(GFX, map_legacy_kq);
+  MQD по `gfx_v11_0_gfx_mqd_init`, doorbell-диапазон RB 0x458/0x7f8 (из трассы Linux), RLC CSIB + преамбула clear-state
+  (`tools/phxctl/csb_gfx11.h`, 960 dword из `clearstate_gfx11.h`). Кекст build 22/23: две очереди (compute/gfx), общая
+  нумерация fence, IB маршрутизируются по ip_type. vkprobe 256/256 на семействе очередей 0.
+- **M1 — METAL РАБОТАЕТ (вычисления), 2026-10-20:** `src/phxaccel` = ускоритель NullMoth (NVAccel) в AMD-режиме
+  (`NMX_ACCEL`, `NM_TAHOE`, классы NMX*) в Auxiliary KC; матчится только после `mesboot claim` (свойство
+  `nmxgpu-claimed`), поэтому при загрузке ничего не стартует. Плагин NullMoth `NVMTLDriver.bundle` 2.4.1 (без изменений)
+  в `/Library/GPUBundles` + наш RADV в `/Library/GPUBundles/nvmtl/libvulkan_radeon.dylib`. `tools/mtlprobe`: MSL-шейдер
+  скомпилирован и выполнен на 780M, 4096/4096. Порядок после загрузки: `bash ~/gpu/phxup.sh`.
+  Ограничение: в AMD-режиме плагин не отдаёт устройство WindowServer (только приложениям) — для Liquid Glass нужен
+  следующий этап (свой фреймбуфер поверх режима GOP + display pipe ускорителя + сборка плагина с WindowServer).
