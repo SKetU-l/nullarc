@@ -19,8 +19,8 @@ def run_build():
     mod = importlib.import_module("OpCore-Simplify")
     o = mod.OCPE()
 
-    report_path = "/home/luuumi-dev/.gemini/antigravity/scratch/rdna3-driver/hardware/firebat_u6c_sysreport/Report.json"
-    acpi_dir = "/home/luuumi-dev/.gemini/antigravity/scratch/rdna3-driver/hardware/firebat_u6c_sysreport/ACPI"
+    report_path = "./hardware/firebat_u6c_sysreport/Report.json"
+    acpi_dir = "./hardware/firebat_u6c_sysreport/ACPI"
 
     print("Loading hardware report and ACPI...")
     hardware_report = o.u.read_file(report_path)
@@ -58,7 +58,7 @@ def run_build():
     print("Building OpenCore EFI...")
     o.build_opencore_efi(customized_hardware, disabled_devices, smbios_model, macos_version, needs_oclp)
 
-    out_dir = "/home/luuumi-dev/.gemini/antigravity/scratch/rdna3-driver/hardware/efi_firebat_u6c_simplify"
+    out_dir = "./hardware/efi_firebat_u6c_simplify"
     if os.path.exists(out_dir):
         shutil.rmtree(out_dir)
     shutil.copytree(o.result_dir, out_dir)

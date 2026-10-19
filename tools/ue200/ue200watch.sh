@@ -4,7 +4,7 @@
 fail=0
 while true; do
   GW=$(route -n get default 2>/dev/null | awk '/gateway/{print $2}')
-  [ -z "$GW" ] && GW=192.168.31.2
+  [ -z "$GW" ] && GW=${GATEWAY_IP:-192.168.1.1}
   if ping -c1 -t2 "$GW" >/dev/null 2>&1; then
     fail=0
   else

@@ -39,7 +39,7 @@
 			<key>IOUserClientClass</key>
 			<string>Rtl89UserClient</string>
 			<key>AutoJoinSSID</key>
-			<string>luuumi-dev</string>
+			<string>WiFi</string>
 			<key>AutoJoinPassword</key>
 			<string>13259877</string>
 		</dict>

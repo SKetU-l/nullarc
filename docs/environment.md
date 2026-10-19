@@ -1,20 +1,20 @@
 # Инвентаризация окружения и оборудования (Environment & Hardware Inventory)
 
 **Дата фиксации:** 11 октября 2026 г.  
-**Рабочая станция разработки (Host / Controller):** `drip-pc`  
+**Рабочая станция разработки (Host / Controller):** `workstation`  
 **Целевая тестовая система (Target):** Ноутбук с GPU AMD RDNA 3 (требуется идентификация)
 
 ---
 
-## 1. Хост-система разработки (Основной ПК: drip-pc)
+## 1. Хост-система разработки (Основной ПК: workstation)
 
-Все данные получены воспроизводимыми системными вызовами на машине `drip-pc`.
+Все данные получены воспроизводимыми системными вызовами на машине `workstation`.
 
 ### 1.1. Операционная система и ядро
 - **ОС:** Arch Linux (rolling release)
 - **Версия ядра:** Linux `7.2.7-arch1-1` (`#1 SMP PREEMPT_DYNAMIC Mon, 21 Sep 2026 18:51:14 +0000 x86_64 GNU/Linux`)
 - **Архитектура:** `x86_64` (Little Endian, 48 bits physical, 48 bits virtual)
-- **Имя хоста:** `drip-pc`
+- **Имя хоста:** `workstation`
 
 ### 1.2. Процессор и память
 - **Модель CPU:** AMD Ryzen 5 5600X 6-Core Processor (Family 25, Model 33, Stepping 0)
@@ -46,7 +46,7 @@
   - `linux-firmware-amdgpu 20260916-1`
   - `libdrm` (`amdgpu_drm.h`, `amdgpu.h` установлены в `/usr/include/libdrm/`)
 
-### 1.5. GPU на основном ПК (drip-pc)
+### 1.5. GPU на основном ПК (workstation)
 > [!IMPORTANT]
 > **Не путать с целевым GPU!**
 - **PCI ID:** `08:00.0 VGA compatible controller [0300]: Advanced Micro Devices, Inc. [AMD/ATI] Navi 10 [Radeon RX 5600 OEM/5600 XT / 5700/5700 XT] [1002:731f] (rev c1)`
@@ -65,7 +65,7 @@
 
 ### 2.1. Верифицированный аппаратный паспорт ноутбука
 - **Модель ноутбука:** **Firebat Computer ZhongYan U6C**
-- **Имя хоста:** `DESKTOP-UC8P7GQ` (IP в локальной сети: `192.168.31.65`)
+- **Имя хоста:** `DESKTOP-UC8P7GQ` (IP в локальной сети: `192.168.1.100`)
 - **Версия BIOS:** `American Megatrends 1.07 (ALASKA - 1072009 - 5001D)`
 - **Процессор (CPU):** **AMD Ryzen 7 H 255 w/ Radeon 780M Graphics** (архитектура Zen 4, семейство Hawk Point / Phoenix).
 - **Графический процессор (GPU):** **AMD Radeon 780M Graphics**
@@ -85,7 +85,7 @@
   - **DMA движок (SDMA):** `SDMA v6.0` (версии `sdma_6_0_4`)
 
 ### 2.2. Статус доступа к ноутбуку
-- **SSH доступ:** Настроен и проверен с `drip-pc` (`ssh дрипсайд@192.168.31.65` по ключу `id_ed25519`).
+- **SSH доступ:** Настроен и проверен с `workstation` (`ssh дрипсайд@192.168.1.100` по ключу `id_ed25519`).
 - **Текущая ОС:** Windows 11 с активной службой OpenSSH Server.
 - **Статус тестового накопителя:** На основном ПК выполняется фоновая запись загрузочной флешки с **Ubuntu 24.04 LTS Desktop** на `/dev/sdc` (14.6 ГБ).
 
@@ -93,7 +93,7 @@
 
 ## 3. Сводка доступности для тестирования
 
-| Компонент | Доступность на Host (drip-pc) | Статус |
+| Компонент | Доступность на Host (workstation) | Статус |
 |---|---|---|
 | Сборка исходников C/C++ / Rust / Make / CMake / Meson | Полная | Готово к работе |
 | Юнит-тестирование независимой логики (pure headers, CLI, симуляторы) | Полная (Clang + ASan/UBSan) | Проверено (`test_xlat12`, `native_rebar_test`) |

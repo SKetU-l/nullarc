@@ -1,4 +1,9 @@
 set -u
+
+SUDO_CMD=\"sudo\"
+if [ -n \"$SUDO_PASS\" ]; then
+    SUDO_CMD=\"echo '$SUDO_PASS' | sudo -S -p ''\"
+fi
 P(){ eval $SUDO_CMD ~/gpu/phxctl/phxctl "$@"; }
 echo "== watchdog: reboot in 3 min unless cancelled =="
 eval $SUDO_CMD bash -c 'nohup shutdown -r +3 >/dev/null 2>&1 &'

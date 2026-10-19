@@ -5,7 +5,7 @@
  * 
  * Disassembling to symbolic ASL+ operators
  *
- * Disassembly of /home/luuumi-dev/.gemini/antigravity/scratch/rdna3-driver/hardware/firebat_u6c_sysreport/ACPI/ssdt1.aml
+ * Disassembly of /Users/Shared/rdna3-driver/hardware/firebat_u6c_sysreport/ACPI/ssdt1.aml
  *
  * Original Table Header:
  *     Signature        "SSDT"

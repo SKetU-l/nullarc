@@ -3,7 +3,7 @@
  * AML/ASL+ Disassembler version 20251212 (64-bit version)
  * Copyright (c) 2000 - 2025 Intel Corporation
  * 
- * Disassembly of /home/luuumi-dev/.gemini/antigravity/scratch/rdna3-driver/hardware/firebat_u6c_sysreport/ACPI/apic.aml
+ * Disassembly of /Users/Shared/rdna3-driver/hardware/firebat_u6c_sysreport/ACPI/apic.aml
  *
  * ACPI Data Table [APIC]
  *
