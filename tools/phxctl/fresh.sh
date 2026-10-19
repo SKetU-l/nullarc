@@ -1,5 +1,5 @@
 #!/bin/bash
-# usage: fresh.sh "<remote cmd>" -> reboot Mac, wait for kext, run command
+# usage: fresh.sh "<remote cmd>"  -> reboot Mac, wait for kext, run command
 SSH_USER="${MAC_SSH_USER:-admin}"
 SSH_PASS="${MAC_SSH_PASS:-}"
 IP="${MAC_IP:-192.168.1.100}"
