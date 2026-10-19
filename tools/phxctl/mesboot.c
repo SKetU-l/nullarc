@@ -330,6 +330,7 @@ static int mes_submit(void *pkt, size_t size, size_t api_status_off, const char 
 #define CMP_MQD  0x2542000ull
 #define CMP_EOP  0x2543000ull
 static void vm8_test(void);
+static void gfx_via_mes(void);
 static void compute_via_mes(void)
 {
    for (int i = 0; i < 1024; i++) vw(CMP_RING + i * 4, 0);
@@ -573,6 +574,7 @@ static void sched_test(void)
    q.header.dwsize = API_FRAME_SIZE_IN_DWORDS;
    mes_submit(&q, sizeof(q), offsetof(union MESAPI__QUERY_MES_STATUS, api_status), "QUERY_SCHED_STATUS");
    if (env_on("MESBOOT_CS")) compute_via_mes();
+   if (env_on("MESBOOT_GFX")) gfx_via_mes();
 }
 
 #define MEC_RING 0x2530000ull
@@ -602,6 +604,74 @@ static void mec_test(void)
    printf("MEC hqd: active=%u rptr=%u scratch0=0x%08x (expect deadbeef)\n", rd(SEG0(0x1fab)), rd(SEG0(0x1fb3)), rd(SEG1(0x2040)));
    printf("MEC testbuf=0x%08x (expect feedf00d)\n", vr(TESTBUF));
    grbm_select(0, 0, 0, 0);
+}
+
+// GFX (graphics) kernel queue: me0 pipe0 queue0 mapped by MES ADD_QUEUE(type GFX, map_legacy_kq), MQD per gfx_v11_0_gfx_mqd_init.
+// Doorbell 0x116 (dword) inside the RB doorbell range Linux programs (LOWER 0x458 / UPPER 0x7f8, byte units).
+#define GFX_RING 0x2570000ull            // 8 KiB ring (2048 dw: the clear-state preamble alone is 960)
+#define GFX_RDW  2048u
+#define GFX_WB   0x2574000ull            // +0 rptr report, +16 wptr poll
+#define GFX_MQD  0x2575000ull            // v11_gfx_mqd, 2 KiB
+#define GFX_CSB  0x2576000ull            // RLC clear-state buffer (RLC_CSIB_*), as gfx_v11_0_init_csb
+#define GFX_DB   0x116u
+#include "csb_gfx11.h"
+static void gfx_via_mes(void)
+{
+   for (unsigned i = 0; i < GFX_RDW; i++) vw(GFX_RING + i * 4, 0);
+   for (int i = 0; i < 32; i++) vw(GFX_WB + i * 4, 0);
+   for (int i = 0; i < 512; i++) vw(GFX_MQD + i * 4, 0);
+   const unsigned ncsb = sizeof(kCsbGfx11) / 4;
+   for (unsigned i = 0; i < ncsb; i++) vw(GFX_CSB + i * 4, kCsbGfx11[i]);
+   wr(SEG1(0x988), (uint32_t)(MC(GFX_CSB) >> 32)); wr(SEG1(0x987), (uint32_t)MC(GFX_CSB) & 0xfffffffc); wr(SEG1(0x989), ncsb);   // RLC_CSIB_ADDR_HI/LO/LENGTH
+   vw(TESTBUF + 0x40, 0);
+   wr(SEG0(0x1dfa), GFX_DB << 2); wr(SEG0(0x1dfb), 0x7f8);           // CP_RB_DOORBELL_RANGE_LOWER/UPPER
+   const uint64_t ring = MC(GFX_RING), rb = ring >> 8, rptr = MC(GFX_WB), wpoll = MC(GFX_WB + 16), mqd = MC(GFX_MQD);
+   struct { uint32_t off, val; } m[] = {
+      {128, (uint32_t)mqd & 0xfffffffc}, {129, (uint32_t)(mqd >> 32)},   // cp_mqd_base_addr
+      {162, 0x00000100},                                                // cp_gfx_mqd_control: PRIV_STATE 1, VMID 0
+      {131, 0}, {134, 0}, {135, 0x00000a01},                            // hqd_vmid, queue_priority, quantum (QUANTUM_EN)
+      {136, (uint32_t)rb}, {137, (uint32_t)(rb >> 32)},                 // cp_gfx_hqd_base = ring >> 8
+      {139, (uint32_t)rptr & 0xfffffffc}, {140, (uint32_t)(rptr >> 32) & 0xffff},
+      {141, (uint32_t)wpoll & 0xfffffffc}, {142, (uint32_t)(wpoll >> 32) & 0xffff},
+      {145, 0x00a00000 | 10u | (8u << 8) | (1u << 29)},                 // hqd_cntl: RB_BUFSZ 10 (2048 dw), RB_BLKSZ 8, KMD_QUEUE
+      {143, (GFX_DB << 2) | (1u << 30)},                                // cp_rb_doorbell_control: offset, DOORBELL_EN
+      {138, 0}, {149, 0}, {150, 0},                                     // rptr, wptr, wptr_hi
+      {130, 1},                                                         // cp_gfx_hqd_active
+   };
+   for (size_t i = 0; i < sizeof(m) / sizeof(m[0]); i++) vw(GFX_MQD + m[i].off * 4, m[i].val);
+   union MESAPI__ADD_QUEUE a;
+   memset(&a, 0, sizeof(a));
+   a.header.type = MES_API_TYPE_SCHEDULER;
+   a.header.opcode = MES_SCH_API_ADD_QUEUE;
+   a.header.dwsize = API_FRAME_SIZE_IN_DWORDS;
+   a.pipe_id = 0; a.queue_id = 0;
+   a.doorbell_offset = GFX_DB;
+   a.mqd_addr = mqd;
+   a.wptr_addr = wpoll;
+   a.queue_type = MES_QUEUE_TYPE_GFX;
+   a.map_legacy_kq = 1;
+   if (mes_submit(&a, sizeof(a), offsetof(union MESAPI__ADD_QUEUE, api_status), "ADD_QUEUE(gfx, map_legacy_kq)")) return;
+   grbm_select(0, 0, 0, 0);
+   printf("gfx hqd after map: active=%u base=0x%x cntl=0x%08x dbctl=0x%08x rptr=%u\n", rd(SEG0(0x1e80)), rd(SEG0(0x1e86)),
+          rd(SEG0(0x1e8f)), rd(SEG0(0x1e8d)), rd(SEG0(0x1e88)));
+   wr(SEG1(0x2041), 0xCAFEDEAD);
+   uint32_t w = 0;
+   if (!env_on("NO_CSB")) for (unsigned i = 0; i < ncsb; i++) vw(GFX_RING + w++ * 4, kCsbGfx11[i]);   // gfx_v11_0_cp_gfx_start
+   vw(GFX_RING + w++ * 4, 0xC0017900); vw(GFX_RING + w++ * 4, 0x41); vw(GFX_RING + w++ * 4, 0xDEADBEEF);   // SET_UCONFIG_REG scratch1
+   vw(GFX_RING + w++ * 4, 0xC0033700); vw(GFX_RING + w++ * 4, 0x00100500);                                   // WRITE_DATA mem, wr confirm
+   vw(GFX_RING + w++ * 4, (uint32_t)MC(TESTBUF + 0x40)); vw(GFX_RING + w++ * 4, (uint32_t)(MC(TESTBUF + 0x40) >> 32));
+   vw(GFX_RING + w++ * 4, 0x6F7A6F7A);
+   vw(GFX_WB + 16, w); vw(GFX_WB + 20, 0);
+   db(GFX_DB * 4, w);
+   for (int i = 0; i < 50; i++) { usleep(10000); if (rd(SEG1(0x2041)) == 0xDEADBEEF && vr(TESTBUF + 0x40) == 0x6F7A6F7A) break; }
+   grbm_select(0, 0, 0, 0);
+   printf("gfx: scratch1=0x%08x (want deadbeef) testbuf=0x%08x (want 6f7a6f7a) rptr=%u rptr_wb=%u grbm=0x%08x cp_stat=0x%08x\n",
+          rd(SEG1(0x2041)), vr(TESTBUF + 0x40), rd(SEG0(0x1e88)), vr(GFX_WB), rd(0x2004), rd(0x21a0));
+   if (env_on("ADOPT_GFX")) {   // hand the gfx queue to the kext as its second queue
+      uint64_t in[6] = {GFX_RING, GFX_RDW, GFX_WB, GFX_DB * 4, w, 0x2580000 | 1};
+      kern_return_t kr = IOConnectCallScalarMethod(conn, SEL_DBG_ADOPTQ, in, 6, NULL, NULL);
+      printf("adopt gfx queue -> kr 0x%x\n", kr);
+   }
 }
 
 static void sched_test(void);
@@ -679,6 +749,15 @@ int main(int argc, char **argv)
    if (all || !strcmp(argv[1], "mes")) mes_start();
    if (!strcmp(argv[1], "kiqdb")) { use_db = 1; kiq_test(); }
    if (!strcmp(argv[1], "kiqsched")) { kiq_init_only(); sched_test(); }
+   if (!strcmp(argv[1], "claim")) {   // GPU is up: let PhxAccel (the Metal accelerator) start on it
+      uint64_t in[1] = {1};
+      printf("claim -> kr 0x%x\n", IOConnectCallScalarMethod(conn, 113, in, 1, NULL, NULL));
+   }
+   if (!strcmp(argv[1], "gfx")) {   // MES already running (after kiqsched): continue its ring where the last run left it
+      sch_wptr = vr(SCH_WB + 16); sch_seq = vr(SCH_WB + 32);
+      printf("sched ring: wptr=%u seq=%llu\n", sch_wptr, (unsigned long long)sch_seq);
+      gfx_via_mes();
+   }
    if (!strcmp(argv[1], "sdmasys")) sdma_sys_test();
    if (!strcmp(argv[1], "kiqreg")) kiqreg_test();
    if (!strcmp(argv[1], "mec")) mec_test();

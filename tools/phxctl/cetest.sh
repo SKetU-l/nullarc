@@ -1,3 +1,8 @@
+SUDO_CMD="sudo"
+if [ -n "$SUDO_PASS" ]; then
+    SUDO_CMD="echo '$SUDO_PASS' | sudo -S -p ''"
+fi
+
 P(){ eval $SUDO_CMD ~/gpu/phxctl/phxctl "$@" 2>&1 | tail -1; }
 R(){ eval $SUDO_CMD ~/gpu/phxctl/phxctl regs "$@" 2>&1 | grep 0x | tr "\n" " "; echo; }
 eval $SUDO_CMD bash -c "nohup shutdown -r +4 >/dev/null 2>&1 &"

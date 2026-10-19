@@ -1,3 +1,8 @@
+SUDO_CMD="sudo"
+if [ -n "$SUDO_PASS" ]; then
+    SUDO_CMD="echo '$SUDO_PASS' | sudo -S -p ''"
+fi
+
 set -u
 
 SUDO_CMD=\"sudo\"
