@@ -8,7 +8,7 @@
 set -euo pipefail
 
 SSH_USER="${MAC_SSH_USER:-admin}"
-IP="${MAC_IP:-192.168.1.100}"
+IP="${MAC_IP:?set MAC_IP to the test Mac address, e.g. MAC_IP=10.0.0.5}"
 SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o ConnectTimeout=10)
 
 echo "[phxctl] Requesting remote reboot on ${SSH_USER}@${IP}..."

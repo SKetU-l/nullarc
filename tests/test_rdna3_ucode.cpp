@@ -7,6 +7,7 @@
 #include <fstream>
 #include <vector>
 #include <cassert>
+#include <cstdlib>
 #include <cstring>
 
 using namespace rdna3;
@@ -26,6 +27,20 @@ static std::vector<uint8_t> read_file(const std::string &path) {
     return buffer;
 }
 
+// Firmware fixtures are AMD's redistributable linux-firmware blobs for Phoenix
+// (GC 11.0.1, SDMA 6.0.1, DCN 3.1.4). They are not committed: run
+// `make fixtures` (tools/fetch_test_firmware.sh) to download them.
+static const char *kFixtureDir = "tests/fixtures/phoenix/";
+
+static std::vector<uint8_t> read_fixture(const std::string &name) {
+    return read_file(std::string(kFixtureDir) + name);
+}
+
+static bool fixtures_present() {
+    std::ifstream probe(std::string(kFixtureDir) + "gc_11_0_1_rlc.bin", std::ios::binary);
+    return probe.is_open();
+}
+
 static void test_null_and_zero_inputs() {
     UcodePayload out[kMaxUcodePayloadsPerFile];
     uint8_t dummy[128] = {};
@@ -38,7 +53,7 @@ static void test_null_and_zero_inputs() {
 }
 
 static void test_phoenix_rlc() {
-    auto bin = read_file("tests/fixtures/phoenix/gc_11_0_3_rlc.bin");
+    auto bin = read_fixture("gc_11_0_1_rlc.bin");
     assert(!bin.empty());
 
     UcodePayload out[kMaxUcodePayloadsPerFile];
@@ -55,58 +70,58 @@ static void test_phoenix_rlc() {
     std::cout << "[PASS] test_phoenix_rlc (extracted " << count << " payloads, RLC_G is last)" << std::endl;
 }
 
-static void test_phoenix_cp_rs64() {
-    // PFP
-    {
-        auto bin = read_file("tests/fixtures/phoenix/gc_11_0_3_pfp.bin");
-        assert(!bin.empty());
-        UcodePayload out[kMaxUcodePayloadsPerFile];
-        uint32_t count = rdna3_ucode_extract(kHostFwFile_CP_PFP, bin.data(), bin.size(), out);
-        assert(count == 3); // RS64_PFP + P0_STACK + P1_STACK
-        assert(out[0].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_PFP));
-        assert(out[1].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_PFP_P0_STACK));
-        assert(out[2].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_PFP_P1_STACK));
-        for (uint32_t i = 0; i < count; ++i) {
-            assert(static_cast<uint64_t>(out[i].offset_bytes) + out[i].size_bytes <= bin.size());
-        }
-    }
+// Phoenix (GC 11.0.1) ships F32 CP microcode with a v1.0 header: one payload each,
+// loaded as CP_PFP / CP_ME / CP_MEC (matches tools/phxctl/bringup5.sh).
+static void check_cp_file(const char *name, uint64_t host_type, PSPGfxFwType legacy_type) {
+    auto bin = read_fixture(name);
+    assert(!bin.empty());
+    auto *common = reinterpret_cast<const common_firmware_header *>(bin.data());
+    assert(common->header_version_major == 1);
 
-    // ME
-    {
-        auto bin = read_file("tests/fixtures/phoenix/gc_11_0_3_me.bin");
-        assert(!bin.empty());
-        UcodePayload out[kMaxUcodePayloadsPerFile];
-        uint32_t count = rdna3_ucode_extract(kHostFwFile_CP_ME, bin.data(), bin.size(), out);
-        assert(count == 3); // RS64_ME + P0_STACK + P1_STACK
-        assert(out[0].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_ME));
-        assert(out[1].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_ME_P0_STACK));
-        assert(out[2].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_ME_P1_STACK));
-        for (uint32_t i = 0; i < count; ++i) {
-            assert(static_cast<uint64_t>(out[i].offset_bytes) + out[i].size_bytes <= bin.size());
-        }
-    }
+    UcodePayload out[kMaxUcodePayloadsPerFile];
+    uint32_t count = rdna3_ucode_extract(host_type, bin.data(), bin.size(), out);
+    assert(count == 1);
+    assert(out[0].fw_type == static_cast<uint32_t>(legacy_type));
+    assert(out[0].offset_bytes == common->ucode_array_offset_bytes);
+    assert(out[0].size_bytes == common->ucode_size_bytes);
+    assert(static_cast<uint64_t>(out[0].offset_bytes) + out[0].size_bytes <= bin.size());
+}
 
-    // MEC
-    {
-        auto bin = read_file("tests/fixtures/phoenix/gc_11_0_3_mec.bin");
-        assert(!bin.empty());
-        UcodePayload out[kMaxUcodePayloadsPerFile];
-        uint32_t count = rdna3_ucode_extract(kHostFwFile_CP_MEC, bin.data(), bin.size(), out);
-        assert(count == 5); // RS64_MEC + P0..P3 stacks
-        assert(out[0].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_MEC));
-        assert(out[1].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_MEC_P0_STACK));
-        assert(out[2].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_MEC_P1_STACK));
-        assert(out[3].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_MEC_P2_STACK));
-        assert(out[4].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_MEC_P3_STACK));
-        for (uint32_t i = 0; i < count; ++i) {
-            assert(static_cast<uint64_t>(out[i].offset_bytes) + out[i].size_bytes <= bin.size());
-        }
-    }
-    std::cout << "[PASS] test_phoenix_cp_rs64 (PFP=3, ME=3, MEC=5 payloads)" << std::endl;
+static void test_phoenix_cp() {
+    check_cp_file("gc_11_0_1_pfp.bin", kHostFwFile_CP_PFP, PSPGfxFwType::CP_PFP);
+    check_cp_file("gc_11_0_1_me.bin",  kHostFwFile_CP_ME,  PSPGfxFwType::CP_ME);
+    check_cp_file("gc_11_0_1_mec.bin", kHostFwFile_CP_MEC, PSPGfxFwType::CP_MEC);
+    std::cout << "[PASS] test_phoenix_cp (F32 v1.0: PFP, ME, MEC = 1 payload each)" << std::endl;
+}
+
+// RS64 (header v2.0, Navi 3x) layout, checked on a synthetic header since no
+// Phoenix firmware uses it: ucode + 2 stacks (PFP/ME) or 4 stacks (MEC).
+static void test_cp_rs64_synthetic() {
+    std::vector<uint8_t> bin(4096, 0);
+    auto *hdr = reinterpret_cast<gfx_firmware_header_v2_0 *>(bin.data());
+    hdr->header.size_bytes = static_cast<uint32_t>(bin.size());
+    hdr->header.header_size_bytes = sizeof(gfx_firmware_header_v2_0);
+    hdr->header.header_version_major = 2;
+    hdr->header.ucode_array_offset_bytes = 256;
+    hdr->ucode_size_bytes = 1024;
+    hdr->data_offset_bytes = 2048;
+    hdr->data_size_bytes = 512;
+
+    UcodePayload out[kMaxUcodePayloadsPerFile];
+    assert(rdna3_ucode_extract(kHostFwFile_CP_PFP, bin.data(), bin.size(), out) == 3);
+    assert(out[0].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_PFP));
+    assert(out[1].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_PFP_P0_STACK));
+    assert(out[2].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_PFP_P1_STACK));
+    assert(rdna3_ucode_extract(kHostFwFile_CP_ME, bin.data(), bin.size(), out) == 3);
+    assert(out[0].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_ME));
+    assert(rdna3_ucode_extract(kHostFwFile_CP_MEC, bin.data(), bin.size(), out) == 5);
+    assert(out[0].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_MEC));
+    assert(out[4].fw_type == static_cast<uint32_t>(PSPGfxFwType::RS64_MEC_P3_STACK));
+    std::cout << "[PASS] test_cp_rs64_synthetic (PFP=3, ME=3, MEC=5 payloads)" << std::endl;
 }
 
 static void test_phoenix_sdma() {
-    auto bin = read_file("tests/fixtures/phoenix/sdma_6_0_3.bin");
+    auto bin = read_fixture("sdma_6_0_1.bin");
     assert(!bin.empty());
 
     UcodePayload out[kMaxUcodePayloadsPerFile];
@@ -124,7 +139,7 @@ static void test_phoenix_sdma() {
 }
 
 static void test_phoenix_imu() {
-    auto bin = read_file("tests/fixtures/phoenix/gc_11_0_3_imu.bin");
+    auto bin = read_fixture("gc_11_0_1_imu.bin");
     assert(!bin.empty());
 
     UcodePayload out[kMaxUcodePayloadsPerFile];
@@ -141,7 +156,7 @@ static void test_phoenix_imu() {
 }
 
 static void test_phoenix_dmcub() {
-    auto bin = read_file("tests/fixtures/phoenix/dcn_3_1_4_dmcub.bin");
+    auto bin = read_fixture("dcn_3_1_4_dmcub.bin");
     assert(!bin.empty());
 
     UcodePayload out[kMaxUcodePayloadsPerFile];
@@ -153,7 +168,7 @@ static void test_phoenix_dmcub() {
 }
 
 static void test_adversarial_truncation() {
-    auto bin = read_file("tests/fixtures/phoenix/sdma_6_0_3.bin");
+    auto bin = read_fixture("sdma_6_0_1.bin");
     assert(!bin.empty());
 
     UcodePayload out[kMaxUcodePayloadsPerFile];
@@ -168,7 +183,7 @@ static void test_adversarial_truncation() {
 }
 
 static void test_fuzzer() {
-    auto original = read_file("tests/fixtures/phoenix/gc_11_0_3_rlc.bin");
+    auto original = read_fixture("gc_11_0_1_rlc.bin");
     assert(!original.empty());
 
     UcodePayload out[kMaxUcodePayloadsPerFile];
@@ -208,8 +223,19 @@ static void test_fuzzer() {
 int main() {
     std::cout << "=== Running RDNA3 / GFX1103 Firmware Extractor Tests ===" << std::endl;
     test_null_and_zero_inputs();
+    test_cp_rs64_synthetic();
+    if (!fixtures_present()) {
+        if (std::getenv("REQUIRE_FIXTURES")) {
+            std::cerr << "[FAIL] firmware fixtures missing in " << kFixtureDir
+                      << " (run `make fixtures`)" << std::endl;
+            return 1;
+        }
+        std::cout << "[SKIP] firmware-based tests: no fixtures in " << kFixtureDir
+                  << " (run `make fixtures` to enable)" << std::endl;
+        return 0;
+    }
     test_phoenix_rlc();
-    test_phoenix_cp_rs64();
+    test_phoenix_cp();
     test_phoenix_sdma();
     test_phoenix_imu();
     test_phoenix_dmcub();

@@ -65,7 +65,10 @@ keepsyms=1 revpatch=cpuname,sbvmm ipc_control_port_options=0 -amfipassbeta amfi_
 После перезагрузки откройте Terminal для проверки работы драйвера:
 
 ```bash
-# 1. Проверка вычислительного пайплайна Metal (4096 рабочих групп на 780M)
+# 1. Сборка и запуск Metal-теста (4096 рабочих групп на 780M).
+#    Имя бинарника должно остаться "mtlprobe": оно есть в списке разрешённых процессов NVMTLDriver.
+clang -fobjc-arc -framework Foundation -framework Metal \
+      -o tools/mtlprobe/mtlprobe tools/mtlprobe/mtlprobe.m
 ./tools/mtlprobe/mtlprobe compute
 
 # Ожидаемый вывод:
@@ -90,16 +93,22 @@ sysctl debug.nvaccel_iop_ok debug.nvaccel_iop_fail debug.nvaccel_iop_copy_us
 ### Что при этом отключается
 * **Валидация библиотек (Library Validation):** Ослабление подсистемы Apple Mobile File Integrity (AMFI) позволяет системным процессам загружать библиотеки без подписи Apple или со сторонними ad-hoc сертификатами.
 * **Неработающие сервисы:** Системные функции, требующие жесткой проверки целостности платформы, перестают работать:
-  * Apple Pay и биометрическая авторизация Touch ID.
   * Воспроизведение DRM-контента FairPlay (Apple TV+, Netflix 4K в Safari).
   * Некоторые приложения из Mac App Store и инструменты разработчиков с включенным Hardened Runtime.
 * **Обновления системы:** Установка инкрементных OTA-обновлений macOS может завершаться с ошибкой при отключенном AMFI и модифицированном SIP.
 
 ### Как вернуться к стандартному состоянию
 Если вам потребуется вернуть штатные механизмы безопасности macOS:
-1. Загрузитесь в OpenCore и удалите `amfi=0x80` и `amfi_get_out_of_my_way=0x1` из `boot-args`.
-2. Удалите `/Library/Extensions/PhxAccel.kext` и `/Library/GPUBundles/NVMTLDriver.bundle`.
-3. Очистите вспомогательную коллекцию кекстов командой: `sudo kmutil clear-staging`.
+1. Пока система загружена с текущими `boot-args`, удалите компоненты драйвера:
+   ```bash
+   sudo rm -rf /Library/Extensions/PhxAccel.kext /Library/GPUBundles/NVMTLDriver.bundle /Library/GPUBundles/nvmtl
+   sudo kmutil install --volume-root / --update-all
+   ```
+   Если система попросит, подтвердите изменение в «Системные настройки → Конфиденциальность и безопасность», затем перезагрузитесь.
+2. Удалите `PhxBringup.kext` из `EFI/OC/Kexts/` и его запись в `Kernel -> Add` в `config.plist`.
+3. Уберите `amfi=0x80`, `amfi_get_out_of_my_way=0x1` и `-amfipassbeta` из `boot-args` и перезагрузитесь.
+
+Порядок важен: если сначала включить AMFI, `WindowServer` при следующем запуске откажется загружать bundle с ad-hoc подписью.
 
 ---
 
@@ -135,6 +144,9 @@ sysctl debug.nvaccel_iop_ok debug.nvaccel_iop_fail debug.nvaccel_iop_copy_us
 ### Команды сборки
 
 ```bash
+# Загрузка прошивок Phoenix из linux-firmware (нужны для тестов ucode)
+make fixtures
+
 # Сборка и запуск юнит-тестов (Linux или macOS)
 make test
 

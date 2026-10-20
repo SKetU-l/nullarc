@@ -65,7 +65,10 @@ A clean sample configuration is available at [`hardware/Sample.plist`](hardware/
 Open Terminal to verify that acceleration and the driver endpoints are operational:
 
 ```bash
-# 1. Verify Metal compute pipeline (4096 workgroups on 780M)
+# 1. Build and run the Metal compute probe (4096 workgroups on 780M).
+#    Keep the output name "mtlprobe": it is on NVMTLDriver's process allow list.
+clang -fobjc-arc -framework Foundation -framework Metal \
+      -o tools/mtlprobe/mtlprobe tools/mtlprobe/mtlprobe.m
 ./tools/mtlprobe/mtlprobe compute
 
 # Expected Output:
@@ -90,16 +93,22 @@ To load third-party graphics translation bundles into `WindowServer` on macOS So
 ### What This Disables
 * **Library Validation:** Relaxing Apple Mobile File Integrity (AMFI) allows processes to load code signed by arbitrary certificates or ad-hoc signatures.
 * **Broken Services:** System services relying on strict platform integrity will stop working:
-  * Apple Pay & Touch ID biometric authorization.
   * FairPlay DRM playback (Apple TV+, Netflix 4K in Safari).
   * Certain App Store applications and developer tools enforcing Hardened Runtime validation.
 * **System Updates:** Incremental macOS OTA updates may fail while AMFI and SIP are modified.
 
 ### How to Revert
 If you need to restore full system security:
-1. Boot into OpenCore and remove `amfi=0x80` and `amfi_get_out_of_my_way=0x1` from `boot-args`.
-2. Remove `/Library/Extensions/PhxAccel.kext` and `/Library/GPUBundles/NVMTLDriver.bundle`.
-3. Rebuild the Auxiliary Kernel Collection with `sudo kmutil clear-staging`.
+1. While still booted with the current `boot-args`, remove the driver components:
+   ```bash
+   sudo rm -rf /Library/Extensions/PhxAccel.kext /Library/GPUBundles/NVMTLDriver.bundle /Library/GPUBundles/nvmtl
+   sudo kmutil install --volume-root / --update-all
+   ```
+   Approve the change in System Settings → Privacy & Security if prompted, then reboot.
+2. Remove `PhxBringup.kext` from `EFI/OC/Kexts/` and its `Kernel -> Add` entry in `config.plist`.
+3. Remove `amfi=0x80`, `amfi_get_out_of_my_way=0x1` and `-amfipassbeta` from `boot-args` and reboot.
+
+Removing the bundle first matters: with AMFI re-enabled, `WindowServer` would otherwise refuse the ad-hoc signed bundle on its next launch.
 
 ---
 
@@ -135,6 +144,9 @@ The prefix is a historical identifier inherited from upstream research by **Null
 ### Build Commands
 
 ```bash
+# Download Phoenix firmware fixtures from linux-firmware (needed by the ucode tests)
+make fixtures
+
 # Compile and run unit tests (Linux or macOS)
 make test
 
