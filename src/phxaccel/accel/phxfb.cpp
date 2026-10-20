@@ -97,6 +97,11 @@ public:
         handleEvent(ordinal ? kIOFBNotifyDidPowerOn : kIOFBNotifyWillPowerOff);
         return kIOPMAckImplied;
     }
+    // The base class's power-change interest handlers reach its controller state, which this framebuffer never set up:
+    // IOFramebuffer::powerStateWillChangeTo dereferenced NULL (+0x120) from a PM callout (panic 2026-10-20). The panel has
+    // nothing to power: acknowledge at once.
+    IOReturn powerStateWillChangeTo(IOPMPowerFlags, unsigned long, IOService *) override { return kIOPMAckImplied; }
+    IOReturn powerStateDidChangeTo(IOPMPowerFlags, unsigned long, IOService *) override { return kIOPMAckImplied; }
     IOReturn setAttribute(IOSelect attribute, uintptr_t value) override {
         if (attribute == kIOWindowServerActiveAttribute) return kIOReturnSuccess;
         if (attribute == kIOPowerAttribute) {
@@ -168,8 +173,36 @@ bool PhxFB::start(IOService *provider)
                v.v_baseAddr, v.v_width, v.v_height, v.v_depth, v.v_rowBytes);
         return false;
     }
-    fBase = (IOPhysicalAddress)v.v_baseAddr;
     fWidth = (uint32_t)v.v_width; fHeight = (uint32_t)v.v_height; fRowBytes = (uint32_t)v.v_rowBytes;
+    // once the video console is up, the platform expert hands out the console's kernel mapping, not the physical
+    // address. The GOP surface sits in one of the GPU's BARs (VRAM aperture): find the BAR whose start holds the same
+    // pixels as the console mapping. (A descriptor over the mapping would need prepare(): getPhysicalSegment on an
+    // unwired one panicked, 2026-10-20.)
+    uint64_t base = v.v_baseAddr;
+    if (base >= 0xFFFF800000000000ull) {
+        const volatile uint32_t *con = (const volatile uint32_t *)(uintptr_t)base;
+        const uint32_t probeWords = 64u * 1024u / 4u;
+        uint64_t found = 0;
+        for (uint32_t i = 0; i < fPCI->getDeviceMemoryCount() && !found; i++) {
+            IODeviceMemory *dm = fPCI->getDeviceMemoryWithIndex(i);
+            if (!dm || dm->getLength() < (IOByteCount)fRowBytes * fHeight) continue;
+            IODeviceMemory *sub = IODeviceMemory::withSubRange(dm, 0, 64u * 1024u);
+            IOMemoryMap *m = sub ? sub->map(kIOMapInhibitCache) : nullptr;
+            OSSafeReleaseNULL(sub);
+            if (!m) continue;
+            const volatile uint32_t *bar = (const volatile uint32_t *)m->getVirtualAddress();
+            uint32_t same = 0, nz = 0;
+            for (uint32_t w = 0; w < probeWords; w++) { const uint32_t a = con[w], b = bar[w]; same += a == b; nz += a != 0; }
+            PFBLOG("BAR index %u at 0x%llx: %u of %u words match the console (%u non-zero)", i,
+                   (unsigned long long)dm->getPhysicalAddress(), same, probeWords, nz);
+            if (same == probeWords && nz) found = dm->getPhysicalAddress();
+            m->release();
+        }
+        if (!found) { PFBLOG("the console surface is in none of the GPU's BARs: leaving the firmware framebuffer"); return false; }
+        base = found;
+    }
+    fBase = (IOPhysicalAddress)base;
+    PFBLOG("console: %ux%u row %u depth %lu at physical 0x%llx", fWidth, fHeight, fRowBytes, v.v_depth, (unsigned long long)fBase);
     if (IODeviceMemory *sm = IODeviceMemory::withRange(fBase, (IOPhysicalLength)fRowBytes * fHeight)) {
         fSurfMap = sm->map(kIOMapWriteCombineCache); sm->release();
     }
