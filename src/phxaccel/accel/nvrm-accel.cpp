@@ -56,6 +56,7 @@ void clock_interval_to_deadline(uint32_t interval, uint32_t scale_factor, uint64
 uint64_t mach_absolute_time(void);
 void absolutetime_to_nanoseconds(uint64_t abstime, uint64_t *result);
 void proc_selfname(char *buf, int size);
+int ml_set_interrupts_enabled(int enable);
 }
 static volatile SInt64 gCntVmAlloc, gCntVmAllocBytes, gCntVmDealloc, gCntVmDeallocBytes, gCntVmRefused,
                        gCntResNew, gCntResFree, gCntMapCommit, gCntMapRelease, gCntMapFree;
@@ -963,6 +964,49 @@ IOReturn NVDisplayPipe::validateTransaction(IOAccelDisplayPipeTransaction2 *)
 static bool nvAccelIopAsyncBusy(const void *pipe);
 static int gIopBench;   // debug.nvaccel_iop_bench: 1 = time a read-only pass over the next copied frame's source
 static SInt64 gIopReadUs, gIopCopyUs, gIopCopyUsMax, gIopCopyUsSum;
+static int gIopSse = 1;   // debug.nvaccel_iop_sse
+
+// One row of a copied frame in 64-byte steps: SSE4.1 streaming loads (movntdqa) and non-temporal stores (movntdq).
+// Some of WindowServer's display surfaces are write-combined, and plain loads read those at ~0.5 GB/s: a frame from
+// one took 13-30 ms against 1-2 ms, and the desktop stuttered (2026-10-20); movntdqa reads them a cache line at a time.
+// The XMM registers of a kernel thread are not kept across a preemption, so interrupts stay off for the row (~10 KB).
+// bytes: a non-zero multiple of 64; src and dst 16-byte aligned. l10r narrows ARGB2101010 to XRGB8888 on the way.
+static void nvIopRowSSE(const void *src, void *dst, unsigned long bytes, bool l10r)
+{
+    static const uint32_t kMask[16] __attribute__((aligned(16))) = {
+        0x00ff0000u, 0x00ff0000u, 0x00ff0000u, 0x00ff0000u, 0x0000ff00u, 0x0000ff00u, 0x0000ff00u, 0x0000ff00u,
+        0x000000ffu, 0x000000ffu, 0x000000ffu, 0x000000ffu, 0xff000000u, 0xff000000u, 0xff000000u, 0xff000000u,
+    };
+    const int intr = ml_set_interrupts_enabled(0);
+    if (l10r) {
+#define NV_L10R_LANE(r) \
+        "movdqa %%" r ", %%xmm8\n\t" "movdqa %%" r ", %%xmm9\n\t" \
+        "psrld $6, %%" r "\n\t" "psrld $4, %%xmm8\n\t" "psrld $2, %%xmm9\n\t" \
+        "pand %%xmm4, %%" r "\n\t" "pand %%xmm5, %%xmm8\n\t" "pand %%xmm6, %%xmm9\n\t" \
+        "por %%xmm8, %%" r "\n\t" "por %%xmm9, %%" r "\n\t" "por %%xmm7, %%" r "\n\t"
+        __asm__ __volatile__(
+            "movdqa 0(%[m]), %%xmm4\n\t" "movdqa 16(%[m]), %%xmm5\n\t" "movdqa 32(%[m]), %%xmm6\n\t" "movdqa 48(%[m]), %%xmm7\n\t"
+            "1:\n\t"
+            "movntdqa 0(%[s]), %%xmm0\n\t" "movntdqa 16(%[s]), %%xmm1\n\t" "movntdqa 32(%[s]), %%xmm2\n\t" "movntdqa 48(%[s]), %%xmm3\n\t"
+            NV_L10R_LANE("xmm0") NV_L10R_LANE("xmm1") NV_L10R_LANE("xmm2") NV_L10R_LANE("xmm3")
+            "movntdq %%xmm0, 0(%[d])\n\t" "movntdq %%xmm1, 16(%[d])\n\t" "movntdq %%xmm2, 32(%[d])\n\t" "movntdq %%xmm3, 48(%[d])\n\t"
+            "add $64, %[s]\n\t" "add $64, %[d]\n\t" "sub $64, %[n]\n\t" "jnz 1b\n\t"
+            : [s] "+r"(src), [d] "+r"(dst), [n] "+r"(bytes)
+            : [m] "r"(kMask)
+            : "memory", "cc");
+#undef NV_L10R_LANE
+    } else {
+        __asm__ __volatile__(
+            "1:\n\t"
+            "movntdqa 0(%[s]), %%xmm0\n\t" "movntdqa 16(%[s]), %%xmm1\n\t" "movntdqa 32(%[s]), %%xmm2\n\t" "movntdqa 48(%[s]), %%xmm3\n\t"
+            "movntdq %%xmm0, 0(%[d])\n\t" "movntdq %%xmm1, 16(%[d])\n\t" "movntdq %%xmm2, 32(%[d])\n\t" "movntdq %%xmm3, 48(%[d])\n\t"
+            "add $64, %[s]\n\t" "add $64, %[d]\n\t" "sub $64, %[n]\n\t" "jnz 1b\n\t"
+            : [s] "+r"(src), [d] "+r"(dst), [n] "+r"(bytes)
+            :
+            : "memory", "cc");
+    }
+    ml_set_interrupts_enabled(intr);
+}
 bool NVDisplayPipe::isTransactionComplete(IOAccelDisplayPipeTransaction2 *)
 {
     return gNvIop != 0 && !nvAccelIopAsyncBusy(this);
@@ -1063,24 +1107,29 @@ IOReturn NVDisplayPipe::performTransaction(IOAccelDisplayPipeTransaction2 *txn)
     // whatever cache mode it asks for, and plain stores left the frame in the CPU cache while the panel scanned the stale
     // DRAM under it, in stripes (2026-10-20). Through the BAR (uncached) they behave as plain stores.
     const bool wide = ((((uintptr_t)src | (uintptr_t)d) & 7) == 0) && !(spr & 1) && !(dpr & 1);
+    const bool sse = gIopSse && ((((uintptr_t)src | (uintptr_t)d) & 15) == 0) && !(spr & 3) && !(dpr & 3);
     for (unsigned y = 0; y < h; y++) {
         const volatile unsigned int *sp = src + (unsigned long)y * spr;
         volatile unsigned int *dp = d + (unsigned long)y * dpr;
         unsigned x = 0;
+        if (sse && words >= 16) {
+            x = words & ~15u;   // 64-byte steps; the rest of the row takes the paths below
+            nvIopRowSSE((const void *)sp, (void *)(uintptr_t)dp, (unsigned long)x * 4, l10r);
+        }
         if (wide) {
             const volatile uint64_t *sq = (const volatile uint64_t *)sp;
             uint64_t *dq = (uint64_t *)(uintptr_t)dp;
             const unsigned pairs = words / 2;
             if (l10r) {
-                for (unsigned i = 0; i < pairs; i++) {
+                for (unsigned i = x / 2; i < pairs; i++) {
                     const uint64_t v = sq[i];
                     const uint64_t px = ((v >> 6) & 0x00ff000000ff0000ull) | ((v >> 4) & 0x0000ff000000ff00ull) | ((v >> 2) & 0x000000ff000000ffull);
                     __asm__ __volatile__("movnti %1, %0" : "=m"(dq[i]) : "r"(0xff000000ff000000ull | px));
                 }
             } else {
-                for (unsigned i = 0; i < pairs; i++) __asm__ __volatile__("movnti %1, %0" : "=m"(dq[i]) : "r"((uint64_t)sq[i]));
+                for (unsigned i = x / 2; i < pairs; i++) __asm__ __volatile__("movnti %1, %0" : "=m"(dq[i]) : "r"((uint64_t)sq[i]));
             }
-            x = pairs * 2;
+            if (x < pairs * 2) x = pairs * 2;
         }
         unsigned int *dw = (unsigned int *)(uintptr_t)dp;
         for (; x < words; x++) {
@@ -1189,6 +1238,7 @@ NVACCEL_CNT(nvaccel_iop_blank,        gCntIopBlank,       "K6: frames copied who
 static SInt64 gCntIopCopySkip;
 NVACCEL_CNT(nvaccel_iop_copy_skip,    gCntIopCopySkip,    "frames kept on the panel because the surface's newest pixels were not yet in system memory");
 SYSCTL_INT(_debug, OID_AUTO, nvaccel_iop_bench, CTLFLAG_RW | CTLFLAG_LOCKED, &gIopBench, 0, "1 = time a read-only pass over the next copied frame's source (nvaccel_iop_read_us)");
+SYSCTL_INT(_debug, OID_AUTO, nvaccel_iop_sse, CTLFLAG_RW | CTLFLAG_LOCKED, &gIopSse, 0, "1 = copy frames with SSE4.1 streaming loads (fast from write-combined surfaces), 0 = 8-byte loads");
 NVACCEL_CNT(nvaccel_iop_read_us,      gIopReadUs,         "the last bench: microseconds to read one frame's source");
 NVACCEL_CNT(nvaccel_iop_copy_us,      gIopCopyUs,         "microseconds the last copied frame took");
 NVACCEL_CNT(nvaccel_iop_copy_us_max,  gIopCopyUsMax,      "the slowest copied frame, microseconds");
@@ -1339,6 +1389,7 @@ static void nvaccelInstallSysctl(void)
     sysctl_register_oid(&sysctl__debug_nvaccel_iop_src_res);    sysctl_register_oid(&sysctl__debug_nvaccel_iop_src_surf);
     sysctl_register_oid(&sysctl__debug_nvaccel_iop_blank);      sysctl_register_oid(&sysctl__debug_nvaccel_iop_copy_skip);
     sysctl_register_oid(&sysctl__debug_nvaccel_iop_bench);      sysctl_register_oid(&sysctl__debug_nvaccel_iop_read_us);
+    sysctl_register_oid(&sysctl__debug_nvaccel_iop_sse);
     sysctl_register_oid(&sysctl__debug_nvaccel_iop_copy_us);    sysctl_register_oid(&sysctl__debug_nvaccel_iop_copy_us_max);
     sysctl_register_oid(&sysctl__debug_nvaccel_iop_copy_us_sum);
     sysctl_register_oid(&sysctl__debug_nvaccel_iop_flip);       sysctl_register_oid(&sysctl__debug_nvaccel_iop_flips);
