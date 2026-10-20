@@ -1,22 +1,34 @@
 // PhxFB: the 780M's display as an IOFramebuffer that PhxAccel (NMXAccel) composites for WindowServer.
-// Like NullMoth's NMIntelFB (phase 1), it takes over the mode the firmware (GOP) already lit and writes nothing to the
-// display engine: the scan-out surface is the boot console's (IOPlatformExpert::getConsoleInfo), the accelerator's display pipe copies
-// each finished frame into a write-combined CPU mapping of it, and a 60 Hz timer stands in for the VBL interrupt
-// WindowServer paces an accelerated display on.
+// Like NullMoth's NMIntelFB (phase 1), it takes over the mode the firmware (GOP) already lit, at boot in place of the
+// firmware framebuffer (IONDRV), and writes nothing to the display engine: the scan-out surface is the boot console's
+// (IOPlatformExpert::getConsoleInfo), the accelerator's display pipe copies each finished frame into a write-combined CPU
+// mapping of it, and a 60 Hz timer stands in for the VBL interrupt WindowServer paces an accelerated display on.
 #include <IOKit/IOLib.h>
 #include <IOKit/pci/IOPCIDevice.h>
 #include <IOKit/graphics/IOFramebuffer.h>
 #include <IOKit/IODeviceMemory.h>
 #include <IOKit/pwr_mgt/RootDomain.h>
 #include <IOKit/IOPlatformExpert.h>
+#include <IOKit/IODeviceTreeSupport.h>
 #include <pexpert/pexpert.h>
 #include <kern/thread_call.h>
+#include <IOKit/IOBufferMemoryDescriptor.h>
+#include <IOKit/IORangeAllocator.h>
+#include <libkern/OSAtomic.h>
 #include "nvrm_vram_abi.h"
+#include "nvrm_gpuva_abi.h"
+
+void phxAgdcInstall();   // phxagdc.cpp: the AppleGraphicsDeviceControl that reports this panel (debug.phxagdc)
+void phxAgdcRemove();
+void phxHoldInit(IOService *fb);   // phxagdc.cpp: debug.phxfb_hold keeps this framebuffer (and so the GPU) busy
 
 #define PFBLOG(fmt, ...) IOLog("PhxFB: " fmt "\n", ##__VA_ARGS__)
 
-class PhxFB : public IOFramebuffer {
-    OSDeclareDefaultStructors(PhxFB)
+// The class name carries "AMD": CoreDisplay tells the GPU vendor from the framebuffer's class name (Intel, AMD, NVDA,
+// AppleParavirt), and for any other name it turns IOPresentment off, which left the panel on the software compositor
+// with the Metal compositor up for the accelerator (GetGPUVendorForFramebufferService -> 1, 2026-10-20).
+class PhxAMDFB : public IOFramebuffer {
+    OSDeclareDefaultStructors(PhxAMDFB)
     IOPCIDevice *fPCI = nullptr;
     IOMemoryMap *fSurfMap = nullptr;   // write-combined CPU view of the scan-out surface (frames land here)
     struct Irq { IOFBInterruptProc proc = nullptr; OSObject *target = nullptr; void *ref = nullptr; };
@@ -28,9 +40,82 @@ class PhxFB : public IOFramebuffer {
     IOPhysicalAddress fBase = 0;
     uint32_t fWidth = 0, fHeight = 0, fRowBytes = 0;
     static constexpr uint64_t kFrameNs = 16666667ull;
+    // The accelerator is NullMoth's, written against an NVIDIA RM: it backs each IOAccel surface with "VRAM" from the
+    // framebuffer (nvAllocVram) and a GPU address from the RM (nvGpuVaAlloc/Map). On the 780M nothing on the GPU reads
+    // those surfaces -- the display pipe copies finished frames by CPU, and RADV keeps its own GPU addresses in
+    // PhxBringup -- so VRAM here is physically contiguous system memory (the 780M has no other kind) and a GPU address
+    // is a number from a private range that never enters a page table. Without them every surface_flush WindowServer
+    // makes failed ("failed to alloc GART space"), 30 times a second, and no frame reached the panel (2026-10-20).
+    static constexpr uint64_t kVaBase = 0x100000000000ull, kVaSize = 1ull << 40, kVramCap = 1024ull << 20;
+    IORangeAllocator *fVa = nullptr;
+    volatile SInt64 fVramBytes = 0;
+    volatile SInt32 fHandles = 0;
+    unsigned fRmLogged = 0;
+
+    IOReturn vramAlloc(NVRMVramRequest *r) {
+        if (!r || r->version != NVRM_VRAM_ABI_VERSION || !r->size) return kIOReturnBadArgument;
+        const uint64_t bytes = round_page_64(r->size);
+        if ((uint64_t)OSAddAtomic64((SInt64)bytes, &fVramBytes) + bytes > kVramCap) {
+            OSAddAtomic64(-(SInt64)bytes, &fVramBytes);
+            if (fRmLogged++ < 16) PFBLOG("VRAM: %llu bytes refused, %lld already out (cap %llu)", bytes, fVramBytes, kVramCap);
+            return kIOReturnNoMemory;
+        }
+        IOBufferMemoryDescriptor *b = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
+            kIODirectionInOut | kIOMemoryPhysicallyContiguous, bytes, 0x0000FFFFFFFFF000ull);
+        if (b && b->prepare() != kIOReturnSuccess) OSSafeReleaseNULL(b);
+        if (!b) {
+            OSAddAtomic64(-(SInt64)bytes, &fVramBytes);
+            if (fRmLogged++ < 16) PFBLOG("VRAM: no contiguous %llu bytes", bytes);
+            return kIOReturnNoMemory;
+        }
+        bzero(b->getBytesNoCopy(), bytes);
+        r->handle = b; r->kva = b->getBytesNoCopy(); r->actualSize = bytes; r->allocationCookie = 0;
+        r->phys = b->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
+        r->mappedTotal = (uint64_t)fVramBytes;
+        if (fRmLogged++ < 16) PFBLOG("VRAM: %llu bytes at phys 0x%llx (%lld out)", bytes, r->phys, fVramBytes);
+        return kIOReturnSuccess;
+    }
+    IOReturn vramFree(NVRMVramRequest *r) {
+        if (!r || r->version != NVRM_VRAM_ABI_VERSION) return kIOReturnBadArgument;
+        IOBufferMemoryDescriptor *b = OSDynamicCast(IOBufferMemoryDescriptor, (OSObject *)r->handle);
+        if (!b) return kIOReturnBadArgument;
+        OSAddAtomic64(-(SInt64)b->getLength(), &fVramBytes);
+        b->complete(); b->release();
+        return kIOReturnSuccess;
+    }
+    IOReturn rmCall(const OSSymbol *fn, void *p1) {
+        if (fn->isEqualTo(NVRM_GPUVA_FN_HANDLES)) {
+            NVRMRmHandles *h = (NVRMRmHandles *)p1;
+            if (!h || h->version != NVRM_GPUVA_ABI_VERSION) return kIOReturnBadArgument;
+            h->kapiDevice = this; h->hClient = 0x50480001; h->hDevice = 0x50480002; h->hSubDevice = 0x50480003;
+            return kIOReturnSuccess;
+        }
+        NVRMGpuVaRequest *g = (NVRMGpuVaRequest *)p1;
+        if (!g || g->version != NVRM_GPUVA_ABI_VERSION) return kIOReturnBadArgument;
+        if (fn->isEqualTo(NVRM_GPUVA_FN_ALLOC)) {
+            const uint64_t len = round_page_64(g->size);
+            uint64_t align = g->align > PAGE_SIZE ? g->align : PAGE_SIZE;
+            if (align & (align - 1)) align = PAGE_SIZE;
+            IORangeScalar off = 0;
+            if (!fVa || !len || !fVa->allocate(len, &off, align)) { g->status = 1; return kIOReturnNoSpace; }
+            g->gpuva = kVaBase + off; g->hVirt = (unsigned)OSIncrementAtomic(&fHandles) + 1; g->status = 0;
+            return kIOReturnSuccess;
+        }
+        if (fn->isEqualTo(NVRM_GPUVA_FN_MAP)) {   // nothing to map: no GPU work reaches these surfaces
+            g->hMemory = (unsigned)OSIncrementAtomic(&fHandles) + 1; g->status = 0;
+            return kIOReturnSuccess;
+        }
+        if (fn->isEqualTo(NVRM_GPUVA_FN_FREE)) {
+            if (!(g->flags & NVRM_GPUVA_FLAG_UNMAP_ONLY) && fVa && g->gpuva >= kVaBase && g->gpuva - kVaBase < kVaSize)
+                fVa->deallocate(g->gpuva - kVaBase, round_page_64(g->size));
+            g->status = 0;
+            return kIOReturnSuccess;
+        }
+        return kIOReturnUnsupported;
+    }
 
     static void vblFire(thread_call_param_t p0, thread_call_param_t) {
-        PhxFB *me = (PhxFB *)p0;
+        PhxAMDFB *me = (PhxAMDFB *)p0;
         if (me->fStopping) return;
         if (me->fVbl.proc) me->fVbl.proc(me->fVbl.target, me->fVbl.ref);
         uint64_t period; nanoseconds_to_absolutetime(kFrameNs, &period);
@@ -148,16 +233,44 @@ public:
             r->width = fWidth; r->height = fHeight; r->pitch = fRowBytes;
             return kIOReturnSuccess;
         }
+        if (fn && fn->isEqualTo(NVRM_VRAM_FN_ALLOC)) return vramAlloc((NVRMVramRequest *)p1);
+        if (fn && fn->isEqualTo(NVRM_VRAM_FN_FREE)) return vramFree((NVRMVramRequest *)p1);
+        if (fn && (fn->isEqualTo(NVRM_GPUVA_FN_HANDLES) || fn->isEqualTo(NVRM_GPUVA_FN_ALLOC) || fn->isEqualTo(NVRM_GPUVA_FN_MAP) ||
+                   fn->isEqualTo(NVRM_GPUVA_FN_FREE)))
+            return rmCall(fn, p1);
         return IOFramebuffer::callPlatformFunction(fn, wait, p1, p2, p3, p4);
     }
 };
 
-OSDefineMetaClassAndStructors(PhxFB, IOFramebuffer)
+OSDefineMetaClassAndStructors(PhxAMDFB, IOFramebuffer)
 
-bool PhxFB::start(IOService *provider)
+// One boot per arming: `nvram phxfb-boot=1` lets the next start take the panel, and start removes the variable and
+// commits NVRAM at once, so a boot that panics after this point comes back on the firmware framebuffer without hands.
+static bool takeBootArming()
+{
+    IORegistryEntry *opts = IORegistryEntry::fromPath("/options", gIODTPlane);
+    if (!opts) return false;
+    OSObject *o = opts->copyProperty("phxfb-boot");
+    const bool armed = o != nullptr;
+    bool stuck = false;
+    OSSafeReleaseNULL(o);
+    if (armed) {
+        opts->removeProperty("phxfb-boot");
+        if (OSString *why = OSString::withCString("phxfb")) { opts->setProperty(kIONVRAMSyncNowPropertyKey, why); why->release(); }
+        o = opts->copyProperty("phxfb-boot");
+        stuck = o != nullptr;
+        PFBLOG("NVRAM phxfb-boot taken (%s)", stuck ? "STILL SET: removal refused, not taking the panel" : "removed and committed");
+        OSSafeReleaseNULL(o);
+    }
+    opts->release();
+    return armed && !stuck;
+}
+
+bool PhxAMDFB::start(IOService *provider)
 {
     char arg[8];
     if (PE_parse_boot_argn("-phxfboff", arg, sizeof arg)) { PFBLOG("-phxfboff: leaving the firmware framebuffer"); return false; }
+    if (!takeBootArming()) { PFBLOG("NVRAM phxfb-boot not set: leaving the firmware framebuffer this boot"); return false; }
     fPCI = OSDynamicCast(IOPCIDevice, provider);
     if (!fPCI) return false;
     if (OSIterator *it = fPCI->getChildIterator(gIOServicePlane)) {
@@ -214,7 +327,9 @@ bool PhxFB::start(IOService *provider)
     setProperty("IOFBDependentID", 0x50485846ull << 32 | 1, 64);   // 'PHXF'
     setProperty("IOFBDependentIndex", 0ull, 32);
     if (!IOFramebuffer::start(provider)) { OSSafeReleaseNULL(fSurfMap); return false; }
+    fVa = IORangeAllocator::withRange(kVaSize - 1, PAGE_SIZE, 0, IORangeAllocator::kLocking);
     setProperty("built-in", kOSBooleanTrue);
+    setProperty("PhxFBWidth", fWidth, 32); setProperty("PhxFBHeight", fHeight, 32);   // the AGDC's panel timing reads these
     fVblTimer = thread_call_allocate(vblFire, this);
     if (fVblTimer) { uint64_t d; clock_interval_to_deadline((uint32_t)(kFrameNs / 1000), kMicrosecondScale, &d); fVblNext = d; thread_call_enter_delayed(fVblTimer, d); }
     static IOPMPowerState states[2] = {
@@ -222,15 +337,19 @@ bool PhxFB::start(IOService *provider)
         { 1, kIOPMDeviceUsable, kIOPMPowerOn, kIOPMPowerOn, 0, 0, 0, 0, 0, 0, 0, 0 },
     };
     registerPowerDriver(this, states, 2);
+    phxHoldInit(this);
+    phxAgdcInstall();
     PFBLOG("panel published: %ux%u row %u at 0x%llx (vbl timer %s)", fWidth, fHeight, fRowBytes,
            (unsigned long long)fBase, fVblTimer ? "60 Hz" : "MISSING");
     return true;
 }
 
-void PhxFB::stop(IOService *provider)
+void PhxAMDFB::stop(IOService *provider)
 {
     fStopping = true;
+    phxAgdcRemove();
     if (fVblTimer) { thread_call_cancel(fVblTimer); while (!thread_call_free(fVblTimer)) { thread_call_cancel(fVblTimer); IOSleep(5); } fVblTimer = nullptr; }
     OSSafeReleaseNULL(fSurfMap);
+    OSSafeReleaseNULL(fVa);
     IOFramebuffer::stop(provider);
 }

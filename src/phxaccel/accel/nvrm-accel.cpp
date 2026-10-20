@@ -636,7 +636,7 @@ public:
 #ifdef PHX_FB
             // PhxAccel: the 780M drives its own panel (PhxFB): WindowServer composites on this accelerator once
             // debug.nvaccelfb registers the panel and WindowServer restarts
-            OSDictionary *fbm = serviceMatching("PhxFB");
+            OSDictionary *fbm = serviceMatching("PhxAMDFB");
             ALOG("AMD accelerator up: watching for PhxFB (the 780M panel) -> WindowServer composites here");
 #else
             // AMD/Intel: the Metal device is for apps; WindowServer draws into NMXGPU's framebuffer, and the plugin copies
@@ -1359,6 +1359,9 @@ static IOService *nvAccelNVRM()
 {
     NVAccel *a = NVAccel::gAccel;
     if (!a) return nullptr;
+#ifdef PHX_FB
+    return a->fFB;   // no NVIDIA RM: PhxFB hands out the surfaces' GPU addresses (accel/phxfb.cpp)
+#endif
     if (!a->fNVRM) {
         OSDictionary *m = IOService::serviceMatching("NVRM");
         if (m) a->fNVRM = IOService::waitForMatchingService(m, 100ULL * 1000 * 1000);

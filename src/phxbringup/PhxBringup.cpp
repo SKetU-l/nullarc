@@ -21,7 +21,7 @@
 
 #include "PhxNativeABI.h"
 
-#define PHX_KEXT_BUILD 24u
+#define PHX_KEXT_BUILD 25u
 
 // psp_gfx_rb_frame (64 B) — the ring entry the PSP reads. Only 5 fields are set; the rest stay zero
 // (Linux amdgpu_psp.c:3485: a non-zero cmd_buf_size makes the PSP silently drop the frame).
@@ -1477,7 +1477,9 @@ IOReturn IOAccelPhxNativeClient::doSubmit(IOExternalMethodArguments *a) {
             va[i] = ib.va_start & kVaMask;
             dw[i] = ib.ib_bytes / 4;
         }
-        if (owner->debugEnabled()) {   // log the IBs RADV sends (first 96 dwords each) for bring-up
+        // log the IBs RADV sends (first 96 dwords each) for bring-up: a client's first submissions only, as every
+        // WindowServer frame dumped its IBs and the log held nothing else (2026-10-20)
+        if (owner->debugEnabled() && emitted < 4) {
             for (uint32_t i = 0; i < h.num_ibs; i++) {
                 for (int m = 0; m < kMaxMaps; m++) {
                     if (!maps[m].used || va[i] < maps[m].va || va[i] >= maps[m].va + maps[m].size)
