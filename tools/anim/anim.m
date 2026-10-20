@@ -1,0 +1,47 @@
+// Synthetic WindowServer load for frame-rate measurements without hands on the machine: a window that slides back and
+// forth, twelve animated layers and a blurred material panel, for argv[1] seconds (default 20).
+// Run in the logged-in GUI session: launchctl asuser <uid> ./anim 20
+#import <Cocoa/Cocoa.h>
+#import <QuartzCore/QuartzCore.h>
+
+int main(int argc, char **argv)
+{
+    @autoreleasepool {
+        const double secs = argc > 1 ? atof(argv[1]) : 20;
+        [NSApplication sharedApplication];
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
+        NSWindow *w = [[NSWindow alloc] initWithContentRect:NSMakeRect(200, 150, 1400, 900)
+                                                  styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
+                                                    backing:NSBackingStoreBuffered defer:NO];
+        w.title = @"phx anim";
+        NSView *v = w.contentView;
+        v.wantsLayer = YES;
+        v.layer.backgroundColor = NSColor.systemTealColor.CGColor;
+        for (int i = 0; i < 12; i++) {
+            CALayer *l = [CALayer layer];
+            l.frame = CGRectMake(50 + i * 110, 100, 80, 80);
+            l.cornerRadius = 16;
+            l.backgroundColor = [NSColor colorWithHue:i / 12.0 saturation:0.8 brightness:0.9 alpha:1].CGColor;
+            CABasicAnimation *a = [CABasicAnimation animationWithKeyPath:@"position.y"];
+            a.fromValue = @100; a.toValue = @800; a.duration = 1.0 + i * 0.1; a.autoreverses = YES; a.repeatCount = HUGE_VALF;
+            [l addAnimation:a forKey:@"y"];
+            [v.layer addSublayer:l];
+        }
+        NSVisualEffectView *fx = [[NSVisualEffectView alloc] initWithFrame:NSMakeRect(300, 250, 800, 400)];
+        fx.material = NSVisualEffectMaterialHUDWindow;
+        fx.blendingMode = NSVisualEffectBlendingModeWithinWindow;
+        fx.state = NSVisualEffectStateActive;
+        [v addSubview:fx];
+        [w makeKeyAndOrderFront:nil];
+        [NSApp activateIgnoringOtherApps:YES];
+        __block int t = 0;
+        [NSTimer scheduledTimerWithTimeInterval:1 / 60.0 repeats:YES block:^(NSTimer *tm) {
+            NSRect f = w.frame;
+            f.origin.x = 200 + 150 * sin(++t / 30.0);
+            [w setFrame:f display:NO];
+        }];
+        [NSTimer scheduledTimerWithTimeInterval:secs repeats:NO block:^(NSTimer *tm) { [NSApp terminate:nil]; }];
+        [NSApp run];
+    }
+    return 0;
+}
