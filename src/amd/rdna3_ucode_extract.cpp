@@ -156,7 +156,7 @@ uint32_t extract_imu(const uint8_t *bin, uint64_t size, UcodePayload out[]) {
     return n;
 }
 
-// RS64 CP family (PFP / ME / MEC) for GFX11 (RDNA 3 / Phoenix).
+// CP family (PFP / ME / MEC) for GFX11 (RDNA 3): F32 (v1, Phoenix) or RS64 (v2).
 // GFX11 RS64 stack layout:
 //   PFP: P0, P1 (2 stacks)
 //   ME:  P0, P1 (2 stacks)
@@ -166,9 +166,28 @@ enum class RS64Family { PFP, ME, MEC };
 uint32_t extract_cp_rs64(const uint8_t *bin, uint64_t size,
                          RS64Family family,
                          UcodePayload out[]) {
+    if (size < sizeof(common_firmware_header)) return 0;
+    auto *common = reinterpret_cast<const common_firmware_header *>(bin);
+
+    // Header v1.x: legacy F32 CP microcode, as shipped for Phoenix (GC 11.0.1)
+    // in linux-firmware. One payload, loaded by PSP as CP_PFP / CP_ME / CP_MEC
+    // (gfx_v11_0 with rs64_enable == false; no stacks and no MEC jump tables).
+    if (common->header_version_major == 1) {
+        uint32_t legacy_type = 0;
+        switch (family) {
+        case RS64Family::PFP: legacy_type = static_cast<uint32_t>(PSPGfxFwType::CP_PFP); break;
+        case RS64Family::ME:  legacy_type = static_cast<uint32_t>(PSPGfxFwType::CP_ME);  break;
+        case RS64Family::MEC: legacy_type = static_cast<uint32_t>(PSPGfxFwType::CP_MEC); break;
+        }
+        return push(out, 0, legacy_type,
+                    common->ucode_array_offset_bytes,
+                    common->ucode_size_bytes, size);
+    }
+
+    // Header v2.x: RS64 CP microcode (Navi 3x) with per-pipe stacks.
+    if (common->header_version_major != 2) return 0;
     if (size < sizeof(gfx_firmware_header_v2_0)) return 0;
     auto *hdr = reinterpret_cast<const gfx_firmware_header_v2_0 *>(bin);
-    if (hdr->header.header_version_major != 2) return 0;
 
     uint32_t n = 0;
     uint32_t ucode_fw_type = 0;
