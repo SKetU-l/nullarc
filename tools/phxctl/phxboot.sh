@@ -39,6 +39,8 @@ touch "$MARK"; sync
 apps_only
 MC=1 CS=1 ADOPT=1 GFX=1 AG=1 bash $G/full.sh kiqsched | grep -E "^compute:|^gfx:|adopt"
 $G/phxctl/mesboot claim
+# no BO cache flushing per submit/wait: 41 fps window drag instead of 13, at the cost of small artifacts (2026-10-20)
+sysctl -w debug.phxbos_flush=0 >/dev/null 2>&1
 for i in $(seq 1 20); do ioreg -rc NMXAccel -d0 | grep -q NMXAccel && break; sleep 1; done
 if ! ioreg -rc NMXAccel -d0 | grep -q NMXAccel; then
     [ $M2 = 1 ] && m2_fail "NMXAccel did not start"
