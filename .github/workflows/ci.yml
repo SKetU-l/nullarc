@@ -25,5 +25,14 @@ jobs:
     - name: Build and run unit tests
       env:
         REQUIRE_FIXTURES: "1"
+      shell: bash
       run: |
-        make test CXX=clang++
+        set +e
+        make test CXX=clang++ 2>&1 | tee test.log
+        status=${PIPESTATUS[0]}
+        if [ "$status" -ne 0 ]; then
+          # Surface the failing output as an annotation on the PR.
+          msg=$(tail -n 25 test.log | sed -e 's/%/%25/g' | awk '{printf "%s%%0A", $0}')
+          echo "::error title=Unit tests failed::${msg}"
+        fi
+        exit "$status"
