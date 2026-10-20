@@ -38,7 +38,7 @@ test: $(TESTS)
 	@echo "All unit tests passed successfully!"
 
 fixtures:
-	sh tools/fetch_test_firmware.sh tests/fixtures/phoenix
+	bash tools/fetch_test_firmware.sh tests/fixtures/phoenix
 
 kext:
 	@echo "Building PhxBringup.kext..."
