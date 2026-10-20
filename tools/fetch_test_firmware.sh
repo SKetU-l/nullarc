@@ -5,7 +5,15 @@
 set -euo pipefail
 
 DEST="${1:-tests/fixtures/phoenix}"
-BASE="${LINUX_FIRMWARE_URL:-https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain/amdgpu}"
+# Mirrors are tried in order; override with LINUX_FIRMWARE_URL=<base url of amdgpu/>.
+if [ -n "${LINUX_FIRMWARE_URL:-}" ]; then
+  MIRRORS=("$LINUX_FIRMWARE_URL")
+else
+  MIRRORS=(
+    "https://gitlab.com/kernel-firmware/linux-firmware/-/raw/main/amdgpu"
+    "https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/plain/amdgpu"
+  )
+fi
 FILES=(
   gc_11_0_1_rlc.bin
   gc_11_0_1_pfp.bin
@@ -22,8 +30,24 @@ for f in "${FILES[@]}"; do
     echo "[fixtures] $f already present"
     continue
   fi
-  echo "[fixtures] fetching $f"
-  curl -fsSL --retry 3 -o "$DEST/$f.tmp" "$BASE/$f"
-  mv "$DEST/$f.tmp" "$DEST/$f"
+  ok=0
+  for base in "${MIRRORS[@]}"; do
+    echo "[fixtures] fetching $f from $base"
+    if curl -fsSL --retry 3 -A "amd-rdna3-macos-driver-ci" -o "$DEST/$f.tmp" "$base/$f"; then
+      # Reject HTML (bot challenge / error pages) masquerading as firmware.
+      if head -c 512 "$DEST/$f.tmp" | grep -qiE '<(!doctype|html)'; then
+        echo "[fixtures]   got an HTML page instead of firmware, trying next mirror" >&2
+      else
+        mv "$DEST/$f.tmp" "$DEST/$f"; ok=1; break
+      fi
+    else
+      echo "[fixtures]   download failed, trying next mirror" >&2
+    fi
+    rm -f "$DEST/$f.tmp"
+  done
+  if [ "$ok" != 1 ]; then
+    echo "[fixtures] ERROR: could not download $f from any mirror" >&2
+    exit 1
+  fi
 done
 echo "[fixtures] done: $DEST"
