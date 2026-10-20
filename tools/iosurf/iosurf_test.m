@@ -14,6 +14,7 @@ int main(int argc, char **argv)
         id<MTLDevice> dev = MTLCreateSystemDefaultDevice();
         if (!dev) { printf("FAIL: no Metal device\n"); return 1; }
         printf("device: %s\n", dev.name.UTF8String);
+        if (getenv("IOSURF_PAUSE")) { printf("pid %d paused\n", getpid()); fflush(stdout); sleep(atoi(getenv("IOSURF_PAUSE"))); }
         NSDictionary *p = @{ (id)kIOSurfaceWidth: @(W), (id)kIOSurfaceHeight: @(H), (id)kIOSurfaceBytesPerElement: @4,
                              (id)kIOSurfacePixelFormat: @((uint32_t)'BGRA') };
         IOSurfaceRef s = IOSurfaceCreate((__bridge CFDictionaryRef)p);
