@@ -12,6 +12,7 @@
 	<key>CFBundleVersion</key><string>0.1</string>
 	<key>OSBundleLibraries</key>
 	<dict>
+		<key>com.apple.AppleGraphicsDeviceControl</key><string>1.0.0</string>
 		<key>com.apple.iokit.IOAcceleratorFamily2</key><string>2.0.0</string>
 		<key>com.apple.iokit.IOGraphicsFamily</key><string>1.0.0b1</string>
 		<key>com.apple.iokit.IOPCIFamily</key><string>1.0.0b1</string>
@@ -26,13 +27,14 @@
 		<key>PhxFB</key>
 		<dict>
 			<key>CFBundleIdentifier</key><string>com.luuumi.PhxAccel</string>
-			<key>IOClass</key><string>PhxFB</string>
+			<key>IOClass</key><string>PhxAMDFB</string>
 			<key>IOProviderClass</key><string>IOPCIDevice</string>
-			<!-- the 780M panel over the firmware (GOP) mode. Test stage: only after the claim, in its own match category
-			     (beside the boot framebuffer); the boot-time takeover (category IOFramebuffer, score above IONDRV) comes later -->
+			<!-- the 780M panel over the firmware (GOP) mode, at boot in place of the firmware framebuffer (IONDRV): above its
+			     score in the same category, like NullMoth's NMIntelFB. start() declines unless NVRAM phxfb-boot is set (one
+			     boot per arming), and then IONDRV still takes the device -->
 			<key>IOPCIPrimaryMatch</key><string>0x19001002</string>
-			<key>IOPropertyMatch</key><dict><key>nmxgpu-claimed</key><true/></dict>
-			<key>IOMatchCategory</key><string>PhxFB</string>
+			<key>IOProbeScore</key><integer>60000</integer>
+			<key>IOMatchCategory</key><string>IOFramebuffer</string>
 		</dict>
 		<key>PhxAccel</key>
 		<dict>
