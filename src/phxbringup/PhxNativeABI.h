@@ -36,6 +36,7 @@ enum {
     PHXN_SEL_CTX       = 6,
     PHXN_SEL_SUBMIT    = 7,
     PHXN_SEL_WAITSEQ   = 8,
+    PHXN_SEL_BOIMPORTHOST = 21,    /* ABI 1.9: in [0] host VA [1] size [2] flags 0 [3] GPU VA 0 -> out [0] handle [1] size [2] 0 [3] bits */
     /* Phoenix-only debug selectors: root, and only with the boot-arg phxdebug=1. */
     PHXN_SEL_DBG_SMU   = 100,  /* in: [0] SMU 13.0.4 message id (allow-list) [1] argument   out: [0] response [1] argument register after */
     PHXN_SEL_DBG_PSP_RING = 101, /* in: [0] op (1 create KM ring, 2 destroy, 3 status) [1] VRAM byte offset (create)

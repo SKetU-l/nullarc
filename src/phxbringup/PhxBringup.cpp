@@ -22,7 +22,7 @@
 
 #include "PhxNativeABI.h"
 
-#define PHX_KEXT_BUILD 29u
+#define PHX_KEXT_BUILD 30u
 
 // debug.phxbos_flush: how a client's BOs are made coherent around each submission and each completed wait.
 // 2 = clflush every line (the bring-up way), 1 = clflushopt (the same lines, pipelined), 0 = none (the GPU maps system
@@ -57,6 +57,7 @@ static constexpr uint64_t kVisTotal = 256ull << 20;
 static constexpr uint64_t kHiTotal = 1536ull << 20;
 static constexpr uint64_t kGttCap = 512ull << 20;
 static constexpr uint64_t kGttMaxBo = 256ull << 20;
+static constexpr uint64_t kHostCap = 4096ull << 20, kHostMaxBo = 1024ull << 20;   // host imports, per client
 static constexpr uint64_t kVaMask = (1ull << 48) - 1;
 static constexpr int kMaxMaps = 4096;
 
@@ -194,10 +195,12 @@ public:
 
 private:
     struct Bo {
-        IOBufferMemoryDescriptor *md;
+        IOMemoryDescriptor *md;   // an IOBufferMemoryDescriptor, or the caller's own pages (host, prepared)
         uint64_t size;
         uint32_t domain;
         uint32_t bits;
+        uint8_t *kva;             // the kernel's view of the BO; NULL for host imports, which the kernel never reads
+        bool host;
     };
     struct Map {
         bool used;
@@ -211,6 +214,8 @@ private:
     IOReturn doReadRegs(IOExternalMethodArguments *a);
     IOReturn doBoCreate(IOExternalMethodArguments *a);
     IOReturn doBoFree(IOExternalMethodArguments *a);
+    IOReturn doBoImportHost(IOExternalMethodArguments *a);
+    void boRelease(Bo &b);
     IOReturn doGemVa(IOExternalMethodArguments *a);
     IOReturn doCtx(IOExternalMethodArguments *a);
     IOReturn doSubmit(IOExternalMethodArguments *a);
@@ -245,7 +250,8 @@ private:
     Bo *bos{nullptr};      // PHXN_MAX_BOS entries, index = handle
     Map *maps{nullptr};    // kMaxMaps entries
     bool ctx[PHXN_MAX_CTX + 1]{};
-    uint64_t visUsed{0}, hiUsed{0}, gttUsed{0};
+    uint64_t visUsed{0}, hiUsed{0}, gttUsed{0}, hostUsed{0};
+    task_t task{nullptr};
     uint64_t emitted{0};
     uint32_t pendFenceHandle{0}, pendFenceOffset{0};
     uint64_t pendFenceSeq{0};
@@ -1147,6 +1153,7 @@ bool IOAccelPhxNativeClient::initWithTask(task_t owningTask, void *securityID, U
     if (!IOUserClient::initWithTask(owningTask, securityID, type))
         return false;
     privileged = clientHasPrivilege(owningTask, kIOClientPrivilegeAdministrator) == kIOReturnSuccess;
+    task = owningTask;
     lock = IOLockAlloc();
     bos = static_cast<Bo *>(IOMallocZero(sizeof(Bo) * PHXN_MAX_BOS));
     maps = static_cast<Map *>(IOMallocZero(sizeof(Map) * kMaxMaps));
@@ -1166,12 +1173,9 @@ bool IOAccelPhxNativeClient::start(IOService *provider) {
 void IOAccelPhxNativeClient::freeAll() {
     if (!bos)
         return;
-    for (uint32_t h = 1; h < PHXN_MAX_BOS; h++) {
-        if (bos[h].md) {
-            bos[h].md->release();
-            bos[h].md = nullptr;
-        }
-    }
+    for (uint32_t h = 1; h < PHXN_MAX_BOS; h++)
+        if (bos[h].md)
+            boRelease(bos[h]);
 }
 
 IOReturn IOAccelPhxNativeClient::clientClose() {
@@ -1251,6 +1255,7 @@ IOReturn IOAccelPhxNativeClient::externalMethod(uint32_t selector, IOExternalMet
         case PHXN_SEL_READREGS:  r = doReadRegs(a); break;
         case PHXN_SEL_BOCREATE:  r = doBoCreate(a); break;
         case PHXN_SEL_BOFREE:    r = doBoFree(a); break;
+        case PHXN_SEL_BOIMPORTHOST: r = doBoImportHost(a); break;
         case PHXN_SEL_GEMVA:     r = doGemVa(a); break;
         case PHXN_SEL_CTX:       r = doCtx(a); break;
         case PHXN_SEL_SUBMIT:    r = doSubmit(a); break;
@@ -1390,7 +1395,7 @@ IOReturn IOAccelPhxNativeClient::doBoCreate(IOExternalMethodArguments *a) {
         return kIOReturnNoMemory;
     bzero(md->getBytesNoCopy(), size);
     *pool += size;
-    bos[h] = Bo{md, size, domain, bits};
+    bos[h] = Bo{md, size, domain, bits, static_cast<uint8_t *>(md->getBytesNoCopy()), false};
     a->scalarOutput[0] = h;
     a->scalarOutput[1] = size;
     a->scalarOutput[2] = domain;
@@ -1408,14 +1413,57 @@ IOReturn IOAccelPhxNativeClient::doBoFree(IOExternalMethodArguments *a) {
     for (int i = 0; i < kMaxMaps; i++)
         if (maps[i].used && maps[i].handle == h)
             maps[i].used = false;
-    if (b->domain == 2)
+    if (b->host)
+        hostUsed -= b->size;
+    else if (b->domain == 2)
         gttUsed -= b->size;
     else if (b->bits & PHXN_PLACED_HI_POOL)
         hiUsed -= b->size;
     else
         visUsed -= b->size;
-    b->md->release();
-    *b = Bo{};
+    boRelease(*b);
+    return kIOReturnSuccess;
+}
+
+void IOAccelPhxNativeClient::boRelease(Bo &b) {
+    if (b.host)
+        b.md->complete();
+    b.md->release();
+    b = Bo{};
+}
+
+// PHXN_SEL_BOIMPORTHOST (ABI 1.9, VK_EXT_external_memory_host): a BO over the caller's own pages, wired for as long as
+// it lives, GPU-mapped later through GemVa like any other. The kext reported ABI 1.12 without it, so every import
+// RADV made (no-copy buffers, IOSurface textures over their surfaces' pages) failed and fell back to copies
+// (2026-10-20). in: [0] host VA [1] size (both page-aligned) [2] flags 0 [3] GPU VA 0; out: [0] handle [1] size
+// [2] GPU VA 0 [3] placement bits.
+IOReturn IOAccelPhxNativeClient::doBoImportHost(IOExternalMethodArguments *a) {
+    if (!shape(a, 4, 4, 0, 0))
+        return kIOReturnBadArgument;
+    const uint64_t va = a->scalarInput[0], size = a->scalarInput[1];
+    if (!va || !size || (va & 4095) || (size & 4095) || a->scalarInput[2] || a->scalarInput[3] || !task)
+        return kIOReturnBadArgument;
+    if (size > kHostMaxBo || hostUsed + size > kHostCap)
+        return kIOReturnNoMemory;
+    uint32_t h = 1;
+    while (h < PHXN_MAX_BOS && bos[h].md)
+        h++;
+    if (h >= PHXN_MAX_BOS)
+        return kIOReturnNoResources;
+    IOMemoryDescriptor *md = IOMemoryDescriptor::withAddressRange(va, size, kIODirectionInOut, task);
+    if (!md)
+        return kIOReturnNoMemory;
+    const IOReturn r = md->prepare();
+    if (r != kIOReturnSuccess) {
+        md->release();
+        return r;
+    }
+    hostUsed += size;
+    bos[h] = Bo{md, size, 2, 0, nullptr, true};
+    a->scalarOutput[0] = h;
+    a->scalarOutput[1] = size;
+    a->scalarOutput[2] = 0;
+    a->scalarOutput[3] = 0;
     return kIOReturnSuccess;
 }
 
@@ -1562,8 +1610,8 @@ IOReturn IOAccelPhxNativeClient::doSubmit(IOExternalMethodArguments *a) {
         fb = findBo(h.fence_handle);
         if (!fb)
             return kIOReturnNotFound;
-        if ((h.fence_offset & 7) || static_cast<uint64_t>(h.fence_offset) + 8 > fb->size)
-            return kIOReturnBadArgument;
+        if (!fb->kva || (h.fence_offset & 7) || static_cast<uint64_t>(h.fence_offset) + 8 > fb->size)
+            return kIOReturnBadArgument;   // the kernel writes the fence: not into a host import
     } else if (h.fence_handle || h.fence_offset) {
         return kIOReturnBadArgument;
     }
@@ -1586,10 +1634,9 @@ IOReturn IOAccelPhxNativeClient::doSubmit(IOExternalMethodArguments *a) {
                     if (!maps[m].used || va[i] < maps[m].va || va[i] >= maps[m].va + maps[m].size)
                         continue;
                     Bo *bo = findBo(maps[m].handle);
-                    if (!bo)
+                    if (!bo || !bo->kva)
                         break;
-                    const uint32_t *d = reinterpret_cast<const uint32_t *>(
-                        static_cast<const uint8_t *>(bo->md->getBytesNoCopy()) + maps[m].off + (va[i] - maps[m].va));
+                    const uint32_t *d = reinterpret_cast<const uint32_t *>(bo->kva + maps[m].off + (va[i] - maps[m].va));
                     const uint32_t cnt = dw[i] < 96 ? dw[i] : 96;
                     for (uint32_t j = 0; j < cnt; j += 8)
                         IOLog("PhxIB %u.%u +%02x: %08x %08x %08x %08x %08x %08x %08x %08x\n", (unsigned)(emitted + 1), i, j,
@@ -1622,7 +1669,7 @@ IOReturn IOAccelPhxNativeClient::doSubmit(IOExternalMethodArguments *a) {
     // E1: no GPU behind the call; the submission retires at once, as in the mock.
     const uint64_t seq = ++emitted;
     if (fb)
-        bcopy(&seq, static_cast<uint8_t *>(fb->md->getBytesNoCopy()) + h.fence_offset, sizeof(seq));
+        bcopy(&seq, fb->kva + h.fence_offset, sizeof(seq));
     a->scalarOutput[0] = seq;
     return kIOReturnSuccess;
 }
@@ -1828,9 +1875,9 @@ void IOAccelPhxNativeClient::flushBos() {
         return;
     uint64_t bytes = 0;
     for (uint32_t h = 1; h < PHXN_MAX_BOS; h++) {
-        if (!bos[h].md)
+        if (!bos[h].kva)   // host imports: the CPU's own pages, which the GPU reads and writes snooped
             continue;
-        const uint8_t *p = static_cast<const uint8_t *>(bos[h].md->getBytesNoCopy());
+        const uint8_t *p = bos[h].kva;
         if (mode == 1) {
             for (uint64_t o = 0; o < bos[h].size; o += 64)
                 __asm__ __volatile__("clflushopt (%0)" ::"r"(p + o) : "memory");
@@ -1874,8 +1921,8 @@ IOReturn IOAccelPhxNativeClient::doWaitSeq(IOExternalMethodArguments *a) {
             flushBos();
             if (pendFenceSeq && pendFenceSeq <= retired) {
                 Bo *fb = findBo(pendFenceHandle);
-                if (fb && pendFenceOffset + 8 <= fb->size)
-                    bcopy(&pendFenceSeq, static_cast<uint8_t *>(fb->md->getBytesNoCopy()) + pendFenceOffset, 8);
+                if (fb && fb->kva && pendFenceOffset + 8 <= fb->size)
+                    bcopy(&pendFenceSeq, fb->kva + pendFenceOffset, 8);
                 pendFenceSeq = 0;
             }
             IOLockUnlock(lock);
