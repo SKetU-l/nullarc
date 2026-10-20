@@ -22,7 +22,7 @@
 
 #include "PhxNativeABI.h"
 
-#define PHX_KEXT_BUILD 27u
+#define PHX_KEXT_BUILD 28u
 
 // debug.phxbos_flush: how a client's BOs are made coherent around each submission and each completed wait.
 // 2 = clflush every line (the bring-up way), 1 = clflushopt (the same lines, pipelined), 0 = none (the GPU maps system
@@ -351,6 +351,15 @@ void PhxBringup::readFbLayout() {
     setProperty("phx-fb-mc-base", fbMcBase, 64);
     setProperty("phx-fb-size", fbSize, 64);
     setProperty("phx-fb-phys", fbPhys, 64);
+    // About This Mac / System Information name the GPU from the PCI device's "model" and size its memory from
+    // "VRAM,totalMB"; without them the 780M read "Display, 15 MB" (the boot framebuffer)
+    static const char kModel[] = "AMD Radeon 780M";
+    if (OSData *m = OSData::withBytes(kModel, sizeof(kModel))) {
+        pci->setProperty("model", m);
+        m->release();
+    }
+    if (fbSize)
+        pci->setProperty("VRAM,totalMB", fbSize >> 20, 32);
 }
 
 void PhxBringup::clearRing() {
