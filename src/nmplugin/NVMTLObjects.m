@@ -3068,7 +3068,8 @@ static NVMTLBuffer *nvmtl_bytes_ring(NVMTLCommandBuffer *cb, NSUInteger len, siz
     if (!_fragmentSamplers) _fragmentSamplers=[NSMutableDictionary new];
     NSString *key=[@(i) stringValue];
     if (nvmtl_pixel_sampler_update(_fragmentSamplers,key,ns ? ns->_pixelState : nil)) _pixelSamplerKey=nil;
-    nvtrace("FRAGMENT SAMPLER[%lu] pixel=%d bound=%d",(unsigned long)i,ns && ns->_pixelState!=nil,ns!=nil);
+    nvtrace("FRAGMENT SAMPLER[%lu] pixel=%d bound=%d %p min %u mag %u mip %u lod %.2f..%.2f",(unsigned long)i,ns && ns->_pixelState!=nil,ns!=nil,(__bridge void *)ns,
+            ns ? ns->_s.desc.min_filter : 9u, ns ? ns->_s.desc.mag_filter : 9u, ns ? ns->_s.desc.mip_filter : 9u, ns ? ns->_s.desc.lod_min : 0.f, ns ? ns->_s.desc.lod_max : 0.f);
     if(ns) { if (!_cb->_resources) _cb->_resources=[NVMTLResSet new];[_cb->_resources addObject:ns]; }
 }
 - (void)setVertexSamplerState:(id<MTLSamplerState>)s atIndex:(NSUInteger)i {
@@ -3109,7 +3110,8 @@ static NVMTLBuffer *nvmtl_bytes_ring(NVMTLCommandBuffer *cb, NSUInteger len, siz
     if (!_begun) { nvlog("encoder: draw with no pipeline set"); return; }
     if (![self nvmtlBindSamplerPipeline]) return;
     nvtrace("DRAW type %u | vs %s | fs %s | blend %s", (unsigned)type, _ps ? _ps->_vname.UTF8String : "-", _ps ? _ps->_fname.UTF8String : "-", _ps ? _ps->_blend.UTF8String : "-");
-    if (nvmtl_trace_on()) { char bufs_[600]; nvmtl_vk_trace_buffers(&_cb->_c, bufs_, sizeof bufs_); nvtrace("  BUFS%s", bufs_); }
+    if (nvmtl_trace_on()) { char bufs_[600]; nvmtl_vk_trace_buffers(&_cb->_c, bufs_, sizeof bufs_); nvtrace("  BUFS%s", bufs_);
+        extern void nvmtl_vk_trace_samplers(nvk_cmdbuf *, char *, size_t); nvmtl_vk_trace_samplers(&_cb->_c, bufs_, sizeof bufs_); nvtrace("  FSLOTS%s", bufs_); }
     if (nvmtl_vk_cmd_set_topology(&_cb->_c, (unsigned)type)) return;
     if ([self nvmtlVertexInputs]) return;
     nvtrace("  direct start %lu count %lu instances %lu", (unsigned long)start, (unsigned long)count, (unsigned long)instances);
@@ -3167,7 +3169,8 @@ static NVMTLBuffer *nvmtl_bytes_ring(NVMTLCommandBuffer *cb, NSUInteger len, siz
         ![self nvmtlTessAddress:ind offset:indOff align:4 what:"indirect patch-draw buffer" out:&ia]) return;
     if (![self nvmtlBindSamplerPipeline]) return;
     nvtrace("DRAW patches %lu cp | vs %s | fs %s | blend %s", (unsigned long)n, _ps->_vname.UTF8String, _ps->_fname.UTF8String, _ps->_blend.UTF8String);
-    if (nvmtl_trace_on()) { char bufs_[600]; nvmtl_vk_trace_buffers(&_cb->_c, bufs_, sizeof bufs_); nvtrace("  BUFS%s", bufs_); }
+    if (nvmtl_trace_on()) { char bufs_[600]; nvmtl_vk_trace_buffers(&_cb->_c, bufs_, sizeof bufs_); nvtrace("  BUFS%s", bufs_);
+        extern void nvmtl_vk_trace_samplers(nvk_cmdbuf *, char *, size_t); nvmtl_vk_trace_samplers(&_cb->_c, bufs_, sizeof bufs_); nvtrace("  FSLOTS%s", bufs_); }
     if (ind) nvtrace("  indirect patches @%lu, pib %s", (unsigned long)indOff, pib ? "yes" : "no");
     else nvtrace("  patches start %lu count %lu instances %lu base %lu, pib %s", (unsigned long)start, (unsigned long)count,
                  (unsigned long)instances, (unsigned long)base, pib ? "yes" : "no");
@@ -3366,7 +3369,8 @@ static NVMTLBuffer *nvmtl_bytes_ring(NVMTLCommandBuffer *cb, NSUInteger len, siz
     nvmtl_retain_resource(_cb, b);
     if (![self nvmtlBindSamplerPipeline]) return;
     nvtrace("DRAW type %u | vs %s | fs %s | blend %s", (unsigned)type, _ps ? _ps->_vname.UTF8String : "-", _ps ? _ps->_fname.UTF8String : "-", _ps ? _ps->_blend.UTF8String : "-");
-    if (nvmtl_trace_on()) { char bufs_[600]; nvmtl_vk_trace_buffers(&_cb->_c, bufs_, sizeof bufs_); nvtrace("  BUFS%s", bufs_); }
+    if (nvmtl_trace_on()) { char bufs_[600]; nvmtl_vk_trace_buffers(&_cb->_c, bufs_, sizeof bufs_); nvtrace("  BUFS%s", bufs_);
+        extern void nvmtl_vk_trace_samplers(nvk_cmdbuf *, char *, size_t); nvmtl_vk_trace_samplers(&_cb->_c, bufs_, sizeof bufs_); nvtrace("  FSLOTS%s", bufs_); }
     if (nvmtl_vk_cmd_set_topology(&_cb->_c, (unsigned)type)) return;
     if ([self nvmtlVertexInputs]) return;
     nvtrace("  indexed count %lu u32 %d off %lu instances %lu baseVertex %ld", (unsigned long)count, it == MTLIndexTypeUInt32, (unsigned long)off, (unsigned long)instances, (long)baseVertex);
@@ -3441,6 +3445,7 @@ static NVMTLBuffer *nvmtl_bytes_ring(NVMTLCommandBuffer *cb, NSUInteger len, siz
 - (void)setFragmentSamplerState:(id<MTLSamplerState>)ss lodMinClamp:(float)lo lodMaxClamp:(float)hi atIndex:(NSUInteger)i {
     [self setFragmentSamplerState:ss atIndex:i];
     NVMTLSamplerState *ns = (NVMTLSamplerState *)ss;
+    nvtrace("FRAGMENT SAMPLER[%lu] clamp %.2f..%.2f", (unsigned long)i, lo, hi);
     if (ns && i < 16) { const nvk_sampler *v = [ns nvmtlClampedLo:lo hi:hi]; if (v != &ns->_s) nvmtl_vk_bind_sampler(&_cb->_c, NVMTL_SET_FRAGMENT, (uint32_t)i, v); }
     NSString *key=[@(i) stringValue];
     if(_fragmentSamplers[key]) {
@@ -3487,7 +3492,8 @@ static NVMTLBuffer *nvmtl_bytes_ring(NVMTLCommandBuffer *cb, NSUInteger len, siz
     if (!_begun) { nvlog("drawPrimitives:indirectBuffer: no render pass"); return; }
     if (![self nvmtlBindSamplerPipeline]) return;
     nvtrace("DRAW type %u | vs %s | fs %s | blend %s", (unsigned)type, _ps ? _ps->_vname.UTF8String : "-", _ps ? _ps->_fname.UTF8String : "-", _ps ? _ps->_blend.UTF8String : "-");
-    if (nvmtl_trace_on()) { char bufs_[600]; nvmtl_vk_trace_buffers(&_cb->_c, bufs_, sizeof bufs_); nvtrace("  BUFS%s", bufs_); }
+    if (nvmtl_trace_on()) { char bufs_[600]; nvmtl_vk_trace_buffers(&_cb->_c, bufs_, sizeof bufs_); nvtrace("  BUFS%s", bufs_);
+        extern void nvmtl_vk_trace_samplers(nvk_cmdbuf *, char *, size_t); nvmtl_vk_trace_samplers(&_cb->_c, bufs_, sizeof bufs_); nvtrace("  FSLOTS%s", bufs_); }
     if (nvmtl_vk_cmd_set_topology(&_cb->_c, (unsigned)type)) return;
     if ([self nvmtlVertexInputs]) return;
     nvmtl_vk_cmd_draw_indirect(&_cb->_c, &nb->_b, off);
@@ -3501,7 +3507,8 @@ static NVMTLBuffer *nvmtl_bytes_ring(NVMTLCommandBuffer *cb, NSUInteger len, siz
     if (!_begun) { nvlog("drawIndexedPrimitives:indirectBuffer: no render pass"); return; }
     if (![self nvmtlBindSamplerPipeline]) return;
     nvtrace("DRAW type %u | vs %s | fs %s | blend %s", (unsigned)type, _ps ? _ps->_vname.UTF8String : "-", _ps ? _ps->_fname.UTF8String : "-", _ps ? _ps->_blend.UTF8String : "-");
-    if (nvmtl_trace_on()) { char bufs_[600]; nvmtl_vk_trace_buffers(&_cb->_c, bufs_, sizeof bufs_); nvtrace("  BUFS%s", bufs_); }
+    if (nvmtl_trace_on()) { char bufs_[600]; nvmtl_vk_trace_buffers(&_cb->_c, bufs_, sizeof bufs_); nvtrace("  BUFS%s", bufs_);
+        extern void nvmtl_vk_trace_samplers(nvk_cmdbuf *, char *, size_t); nvmtl_vk_trace_samplers(&_cb->_c, bufs_, sizeof bufs_); nvtrace("  FSLOTS%s", bufs_); }
     if (nvmtl_vk_cmd_set_topology(&_cb->_c, (unsigned)type)) return;
     if ([self nvmtlVertexInputs]) return;
     nvmtl_vk_cmd_draw_indexed_indirect(&_cb->_c, &ni->_b, ioff, it == MTLIndexTypeUInt32, &nb->_b, off);

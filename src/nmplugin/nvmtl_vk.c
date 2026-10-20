@@ -3038,6 +3038,19 @@ int nvmtl_vk_trace_buffers(nvk_cmdbuf *c, char *out, size_t cap)
     if (!k) snprintf(out, cap, " (none)");
     return k;
 }
+// trace: the fragment set's texture and sampler slots 0-5 as the draw will read them (diagnostic)
+void nvmtl_vk_trace_samplers(nvk_cmdbuf *c, char *out, size_t cap)
+{
+    if (!out || cap < 16) return;
+    out[0] = 0;
+    if (!c || !c->table) return;
+    nvmtl_bindtable *t = (nvmtl_bindtable *)c->table;
+    size_t n = 0;
+    for (int i = 0; i < 6 && n + 40 < cap; i++) {
+        const nvmtl_slot *tx = &t->s[1][NVMTL_NBUF + i], *sm = &t->s[1][NVMTL_NBUF + NVMTL_NTEX + i];
+        n += (size_t)snprintf(out + n, cap - n, " t%d %p s%d %p", i, tx->kind ? tx->h : NULL, i, sm->kind ? sm->h : NULL);
+    }
+}
 int nvmtl_vk_bind_texture(nvk_cmdbuf *c, uint32_t set, uint32_t index, nvk_image *img)
 {
     if (index >= NVMTL_NTEX) { nvlog("bind texture: index %u is outside [0,%d)", index, NVMTL_NTEX); return -1; }

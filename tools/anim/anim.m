@@ -1,6 +1,6 @@
 // Synthetic WindowServer load for frame-rate measurements without hands on the machine: a window that slides back and
 // forth, twelve animated layers and a blurred material panel, for argv[1] seconds (default 20).
-// Run in the logged-in GUI session: launchctl asuser <uid> ./anim 20
+// Run in the logged-in GUI session: launchctl asuser <uid> ./anim 20 [x y w h] (points, origin bottom-left)
 #import <Cocoa/Cocoa.h>
 #import <QuartzCore/QuartzCore.h>
 
@@ -8,9 +8,11 @@ int main(int argc, char **argv)
 {
     @autoreleasepool {
         const double secs = argc > 1 ? atof(argv[1]) : 20;
+        const double wx = argc > 5 ? atof(argv[2]) : 200, wy = argc > 5 ? atof(argv[3]) : 150;
+        const double ww = argc > 5 ? atof(argv[4]) : 1400, wh = argc > 5 ? atof(argv[5]) : 900;
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyRegular];
-        NSWindow *w = [[NSWindow alloc] initWithContentRect:NSMakeRect(200, 150, 1400, 900)
+        NSWindow *w = [[NSWindow alloc] initWithContentRect:NSMakeRect(wx, wy, ww, wh)
                                                   styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskClosable
                                                     backing:NSBackingStoreBuffered defer:NO];
         w.title = @"phx anim";
@@ -37,7 +39,7 @@ int main(int argc, char **argv)
         __block int t = 0;
         [NSTimer scheduledTimerWithTimeInterval:1 / 60.0 repeats:YES block:^(NSTimer *tm) {
             NSRect f = w.frame;
-            f.origin.x = 200 + 150 * sin(++t / 30.0);
+            f.origin.x = wx + 150 * sin(++t / 30.0);
             [w setFrame:f display:NO];
         }];
         [NSTimer scheduledTimerWithTimeInterval:secs repeats:NO block:^(NSTimer *tm) { [NSApp terminate:nil]; }];

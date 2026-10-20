@@ -1843,8 +1843,10 @@ static void nvmtl_log_compute_descriptor(MTLComputePipelineDescriptor *d) {
     } else
         failed = nvmtl_vk_sampler_create(linear, repeat, &s->_s);
     if (failed) { nvlog("newSamplerStateWithDescriptor: FAILED"); return nil; }
-    nvlog("newSamplerStateWithDescriptor: -> %p (%s, %s)", (__bridge void *)s,
-          linear ? "linear" : "nearest", repeat ? "repeat" : "clamp");
+    nvlog("newSamplerStateWithDescriptor: -> %p vk %p (%s, %s) min %lu mag %lu mip %lu lod %.2f..%.2f norm %d addr %lu/%lu aniso %lu label %s",
+          (__bridge void *)s, s->_s.s, linear ? "linear" : "nearest", repeat ? "repeat" : "clamp", (unsigned long)sd.minFilter, (unsigned long)sd.magFilter,
+          (unsigned long)sd.mipFilter, sd.lodMinClamp, sd.lodMaxClamp, (int)sd.normalizedCoordinates, (unsigned long)sd.sAddressMode,
+          (unsigned long)sd.tAddressMode, (unsigned long)sd.maxAnisotropy, sd.label.UTF8String ?: "-");
     return s; }
 
 - (id<MTLComputePipelineState>)newComputePipelineStateWithFunction:(id<MTLFunction>)fn error:(NSError **)err {

@@ -20,7 +20,8 @@ int main(void)
         td.usage = MTLTextureUsageShaderRead | MTLTextureUsageRenderTarget;
         id<MTLTexture> tex = [dev newTextureWithDescriptor:td];
         static uint8_t g[256 * 256 * 4];
-        for (int y = 0; y < N; y++) for (int x = 0; x < N; x++) { uint8_t *p = g + (y * N + x) * 4; p[0] = p[1] = p[2] = (x & 1) ? 255 : 0; p[3] = 255; }
+        const int grad = getenv("GRAD") != NULL;   // GRAD=1: a horizontal gradient, so level 2 is not uniform
+        for (int y = 0; y < N; y++) for (int x = 0; x < N; x++) { uint8_t *p = g + (y * N + x) * 4; p[0] = p[1] = p[2] = grad ? (uint8_t)x : (x & 1) ? 255 : 0; p[3] = 255; }
         [tex replaceRegion:MTLRegionMake2D(0, 0, N, N) mipmapLevel:0 withBytes:g bytesPerRow:N * 4];
         id<MTLCommandQueue> q = [dev newCommandQueue];
         id<MTLCommandBuffer> cb = [q commandBuffer]; id<MTLBlitCommandEncoder> bl = [cb blitCommandEncoder];
@@ -43,6 +44,9 @@ int main(void)
             static uint8_t px[256 * 256 * 4];
             [out getBytes:px bytesPerRow:N * 4 fromRegion:MTLRegionMake2D(0, 0, N, N) mipmapLevel:0];
             const int y = N / 2;
+            if (grad) { printf("%s gradient: %3d %3d %3d %3d %3d %3d %3d %3d -> %s\n", clamp ? "lodMinClamp 2" : "no clamp     ",
+                   px[(y*N+100)*4], px[(y*N+101)*4], px[(y*N+102)*4], px[(y*N+103)*4], px[(y*N+104)*4], px[(y*N+105)*4], px[(y*N+106)*4], px[(y*N+107)*4],
+                   px[(y*N+100)*4] == px[(y*N+101)*4] && px[(y*N+101)*4] == px[(y*N+102)*4] ? "BLOCKS (magnification filter)" : "smooth (minification filter)"); continue; }
             printf("%s: %3d %3d %3d %3d %3d %3d -> %s\n", clamp ? "lodMinClamp 2" : "no clamp     ",
                    px[(y*N+100)*4], px[(y*N+101)*4], px[(y*N+102)*4], px[(y*N+103)*4], px[(y*N+104)*4], px[(y*N+105)*4],
                    abs(px[(y*N+100)*4] - px[(y*N+101)*4]) > 100 ? "stripes (level 0)" : "grey (reduced level)");

@@ -238,6 +238,8 @@ void nvmtl_bind_embedded(NVMTLCommandBuffer *cb, uint32_t set, NVMTLFunction *fn
             nvmtl_retain_resource(cb, s);
             if (nvmtl_vk_bind_sampler(&cb->_c, set, [pair[0] unsignedIntValue], &s->_s))
                 nvlog("static sampler slot %@: bind FAILED", pair[0]);
+            nvtrace("  STATIC %s set %u slot %u -> %p (min %u mag %u)", fn->_fname.UTF8String, set, [pair[0] unsignedIntValue], s->_s.s,
+                    s->_s.desc.min_filter, s->_s.desc.mag_filter);
         }
     }
     NSArray<NVMTLEmbeddedPlan *> *embedded = nvmtl_embedded_plan(fn);
