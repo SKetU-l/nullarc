@@ -29,8 +29,8 @@
 
 ### 2. Загрузка файлов релиза
 Скачайте готовые сборки со страницы [GitHub Releases](https://github.com/luuumi-dev/amd-rdna3-macos-driver/releases):
-* **[`AMD-RDNA3-Radeon-780M-macOS-Full-Package-v0.2.0-alpha.zip`](https://github.com/luuumi-dev/amd-rdna3-macos-driver/releases/download/v0.2.0-alpha/AMD-RDNA3-Radeon-780M-macOS-Full-Package-v0.2.0-alpha.zip)** *(Рекомендуется)*: Полный пакет, содержащий `PhxBringup.kext` для OpenCore, `PhxAccel.kext` для `/Library/Extensions` и транслятор `NVMTLDriver.bundle` для `/Library/GPUBundles`.
-* **[`PhxBringup.kext-v0.2.0-alpha.zip`](https://github.com/luuumi-dev/amd-rdna3-macos-driver/releases/download/v0.2.0-alpha/PhxBringup.kext-v0.2.0-alpha.zip)**: Автономный кекст для OpenCore для отладки инициализации кремния и командных колец.
+* **[`AMD-RDNA3-Radeon-780M-macOS-Full-Package-v0.2.1-alpha.zip`](https://github.com/luuumi-dev/amd-rdna3-macos-driver/releases/download/v0.2.1-alpha/AMD-RDNA3-Radeon-780M-macOS-Full-Package-v0.2.1-alpha.zip)** *(Рекомендуется)*: Полный пакет, содержащий `PhxBringup.kext` для OpenCore, `PhxAccel.kext` для `/Library/Extensions` и транслятор `NVMTLDriver.bundle` для `/Library/GPUBundles`.
+* **[`PhxBringup.kext-v0.2.1-alpha.zip`](https://github.com/luuumi-dev/amd-rdna3-macos-driver/releases/download/v0.2.1-alpha/PhxBringup.kext-v0.2.1-alpha.zip)**: Автономный кекст для OpenCore для отладки инициализации кремния и командных колец.
 
 ### 3. Настройка OpenCore `boot-args`
 Добавьте аргументы загрузки в ваш `config.plist` по пути `NVRAM -> Add -> 7C436110-AB2A-4BBB-A880-FE41995C9F82 -> boot-args`:

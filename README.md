@@ -29,8 +29,8 @@ Experimental open-source graphics bringup and acceleration stack for **AMD RDNA 
 
 ### 2. Download Release Assets
 Download the official release archives from the [GitHub Releases Page](https://github.com/luuumi-dev/amd-rdna3-macos-driver/releases):
-* **[`AMD-RDNA3-Radeon-780M-macOS-Full-Package-v0.2.0-alpha.zip`](https://github.com/luuumi-dev/amd-rdna3-macos-driver/releases/download/v0.2.0-alpha/AMD-RDNA3-Radeon-780M-macOS-Full-Package-v0.2.0-alpha.zip)** *(Recommended)*: Complete package including `PhxBringup.kext` for EFI, `PhxAccel.kext` for `/Library/Extensions`, and `NVMTLDriver.bundle` for `/Library/GPUBundles`.
-* **[`PhxBringup.kext-v0.2.0-alpha.zip`](https://github.com/luuumi-dev/amd-rdna3-macos-driver/releases/download/v0.2.0-alpha/PhxBringup.kext-v0.2.0-alpha.zip)**: Standalone OpenCore EFI kext for low-level silicon bringup and ring testing.
+* **[`AMD-RDNA3-Radeon-780M-macOS-Full-Package-v0.2.1-alpha.zip`](https://github.com/luuumi-dev/amd-rdna3-macos-driver/releases/download/v0.2.1-alpha/AMD-RDNA3-Radeon-780M-macOS-Full-Package-v0.2.1-alpha.zip)** *(Recommended)*: Complete package including `PhxBringup.kext` for EFI, `PhxAccel.kext` for `/Library/Extensions`, and `NVMTLDriver.bundle` for `/Library/GPUBundles`.
+* **[`PhxBringup.kext-v0.2.1-alpha.zip`](https://github.com/luuumi-dev/amd-rdna3-macos-driver/releases/download/v0.2.1-alpha/PhxBringup.kext-v0.2.1-alpha.zip)**: Standalone OpenCore EFI kext for low-level silicon bringup and ring testing.
 
 ### 3. OpenCore Boot Configuration
 Add the required boot arguments to your OpenCore `config.plist` under `NVRAM -> Add -> 7C436110-AB2A-4BBB-A880-FE41995C9F82 -> boot-args`:
