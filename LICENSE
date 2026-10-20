@@ -1,0 +1,58 @@
+# Licenses & Attribution
+
+This repository contains code with different open-source and noncommercial licenses depending on the component.
+
+---
+
+## 1. Core Kernel Driver & Utilities (`PhxBringup.kext`, `phxctl`)
+
+The core silicon bringup driver (`PhxBringup.kext`), registers, IP discovery, and command submission logic are licensed under the **GNU General Public License v2.0** (GPL-2.0-only) or MIT License, compatible with the upstream Linux `amdgpu` driver components they interface with.
+
+Copyright (c) 2026 luuumi-dev and contributors.
+
+---
+
+## 2. Accelerator & Display Controller (`PhxAccel` / `src/phxaccel`)
+
+The `PhxAccel` kernel extension, framebuffer interface (`PhxAMDFB`), display timing controller (`PhxAGDC`), and `NVMTLDriver` window server patches are derived from NullMoth's driver architecture and are licensed under the **PolyForm Noncommercial License 1.0.0**.
+
+**Required Notice:**
+```
+NullMoth NVIDIA driver for macOS
+Copyright (c) 2026 NullMoth Systems.
+SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+```
+
+> **Commercial Use Prohibited:** Under the terms of the PolyForm Noncommercial License 1.0.0, you may not use this software for any commercial purpose (any purpose intended for or directed towards commercial advantage or monetary compensation).
+
+Full text of the PolyForm Noncommercial License 1.0.0:
+https://polyformproject.org/licenses/noncommercial/1.0.0/
+
+---
+
+## 3. Mesa RADV Patches (`mesa-patches-phoenix`)
+
+All patches to the Mesa 3-D Graphics Library (`mesa-patches-phoenix`) remain licensed under the original **MIT License**:
+
+```
+Copyright (C) 1999-2007  Brian Paul   All Rights Reserved.
+Copyright (c) 2026 Mesa / RADV contributors.
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included
+in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+```

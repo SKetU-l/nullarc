@@ -1,15 +1,26 @@
-# Temp / Agent artifacts
-.omo/
-.slim/
-.current_notepad
-.DS_Store
-._*
+# Build outputs and compilation artifacts
+build/
+dist/
 *.o
 *.dylib
 *.bin
-build/
-dist/
-__pycache__/
+*.kext/
+*.bundle/
+*.dSYM/
 *.pyc
+__pycache__/
+
+# macOS and OS metadata
+.DS_Store
+._*
+
+# Editor, IDE and local agent metadata
+.vscode/
+.idea/
+.omo/
+.slim/
+memory/
+.current_notepad
+
+# Reference dumps and vendor assets if downloaded locally
 reference/
-tests/test_*

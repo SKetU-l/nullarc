@@ -1,162 +1,201 @@
-# Драйвер AMD RDNA 3 (Radeon 780M / GFX1103) для macOS
+# Проект драйвера и инициализации AMD RDNA 3 (Radeon 780M / GFX1103) для macOS
 
-[![macOS](https://img.shields.io/badge/macOS-Tahoe%2026.6.2%20%2F%20Sonoma-success?logo=apple&logoColor=white)](https://www.apple.com/macos/)
-[![Архитектура](https://img.shields.io/badge/Архитектура-RDNA%203%20%2F%20GFX1103-red?logo=amd&logoColor=white)](https://www.amd.com/)
-[![Metal](https://img.shields.io/badge/Metal-3D%20%26%20Compute%20Активен-orange?logo=apple&logoColor=white)](https://developer.apple.com/metal/)
+[![macOS](https://img.shields.io/badge/macOS-Sonoma%2014.x%20%2F%20Tahoe%2025.x-success?logo=apple&logoColor=white)](https://www.apple.com/macos/)
+[![Architecture](https://img.shields.io/badge/Architecture-RDNA%203%20%2F%20GFX1103-red?logo=amd&logoColor=white)](https://www.amd.com/)
 [![Vulkan](https://img.shields.io/badge/Vulkan-1.4.363%20(RADV)-red?logo=vulkan&logoColor=white)](https://mesa3d.org/)
-[![Статус](https://img.shields.io/badge/Веха-M2%20Активна%20(WindowServer%20Metal)-brightgreen)](https://github.com/luuumi-dev/amd-rdna3-macos-driver)
-[![Релизы](https://img.shields.io/github/v/release/luuumi-dev/amd-rdna3-macos-driver?color=blue&logo=github)](https://github.com/luuumi-dev/amd-rdna3-macos-driver/releases)
+[![CI](https://github.com/luuumi-dev/amd-rdna3-macos-driver/actions/workflows/ci.yml/badge.svg)](https://github.com/luuumi-dev/amd-rdna3-macos-driver/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/luuumi-dev/amd-rdna3-macos-driver?color=blue&logo=github)](https://github.com/luuumi-dev/amd-rdna3-macos-driver/releases)
+[![License](https://img.shields.io/badge/License-Multi--License-lightgrey.svg)](LICENSE)
 
-Язык: **[English (Английский)](README.md)** | **Русский**
+Язык: **[English (Original)](README.md)** | **Русский**
 
-Первый в мире графический драйвер с открытым исходным кодом и низкоуровневая система инициализации оборудования, обеспечивающие **3D-ускорение Metal, вычисления Metal Compute и аппаратный композитинг рабочего стола WindowServer** для **встроенной графики AMD RDNA 3 (Radeon 780M / APU Phoenix и Hawk Point, GFX1103 / GC 11.0.1)** на **macOS Tahoe (Darwin 25.x)** и macOS Sonoma.
+Экспериментальный открытый стек драйверов и низкоуровневой аппаратной инициализации для **интегрированной графики AMD RDNA 3 (Radeon 780M / APU Phoenix и Hawk Point, GFX1103 / GC 11.0.1)** в среде **macOS Sonoma (14.x)** и **macOS Tahoe (Darwin 25.x)**.
+
+> [!NOTE]
+> **Фактический статус на реальном железе:**
+> Тесты вычислений Metal успешно проходят (`mtlprobe compute`, 4096/4096 рабочих групп), композитинг рабочего стола `WindowServer` работает на графике Radeon 780M на тестовом ноутбуке **Firebat U6C** (AMD Ryzen 7 7840HS / 8845HS). Другие ноутбуки, портативные консоли, модели APU и настольные конфигурации в настоящий момент **не тестировались**.
 
 ---
 
-## 🧪 Руководство по установке и тестированию (Quickstart)
+## 🧪 Инструкция по установке для ранних тестировщиков (Quickstart)
 
 > [!WARNING]
-> Данный драйвер является альфа-версией и предназначен для тестеров, разработчиков и энтузиастов Hackintosh, уверенно работающих с OpenCore и инструментами восстановления macOS.
+> Данный драйвер находится на стадии альфа-тестирования. Отключение встроенных механизмов безопасности macOS несет реальные риски. Обязательно ознакомьтесь с разделом [Риски безопасности и отключение AMFI](#-риски-безопасности-и-отключение-amfi) перед установкой.
 
-### 1. Требования к оборудованию
-* **Процессор (APU):** AMD Ryzen 7 7840HS, 7840U, 8845HS, 8840U или совместимые чипы семейств Phoenix / Hawk Point.
-* **Видеоядро (iGPU):** AMD Radeon 780M (`1002:15bf`, архитектура GC 11.0.1 / GFX1103).
-* **Экран:** Встроенная матрица ноутбука eDP (2560x1600 или 1920x1080).
-* **Операционная система:** macOS Tahoe (26.x / Darwin 25.x) или macOS Sonoma (14.x).
+### 1. Поддерживаемое железо
+* **Целевые процессоры:** AMD Ryzen 7 7840HS, 7840U, 8845HS, 8840U (линейки Phoenix и Hawk Point).
+* **Графическое ядро:** AMD Radeon 780M (`1002:15bf` / `1002:1900`, GC 11.0.1 / GFX1103).
+* **Эталонное устройство:** Firebat U6C (встроенная матрица 16" 2560x1600 eDP). На других платформах работоспособность экспериментальна.
 
-### 2. Загрузка компонентов релиза
-Скачайте актуальные архивы со [страницы релизов GitHub](https://github.com/luuumi-dev/amd-rdna3-macos-driver/releases):
-* **`AMD-RDNA3-Radeon-780M-v0.2.0-alpha.zip`** *(Рекомендуется)*: Полный комплект, содержащий все три необходимых компонента (`PhxBringup.kext`, `PhxAccel.kext` и `NVMTLDriver.bundle`).
-* **`PhxBringup-v0.2.0-alpha.zip`**: Отдельный кекст только для загрузчика OpenCore EFI (для тестирования базовой инициализации ядра и Metal Compute).
+### 2. Загрузка файлов релиза
+Скачайте готовые сборки со страницы [GitHub Releases](https://github.com/luuumi-dev/amd-rdna3-macos-driver/releases):
+* **[`AMD-RDNA3-Radeon-780M-macOS-Full-Package-v0.2.0-alpha.zip`](https://github.com/luuumi-dev/amd-rdna3-macos-driver/releases/download/v0.2.0-alpha/AMD-RDNA3-Radeon-780M-macOS-Full-Package-v0.2.0-alpha.zip)** *(Рекомендуется)*: Полный пакет, содержащий `PhxBringup.kext` для OpenCore, `PhxAccel.kext` для `/Library/Extensions` и транслятор `NVMTLDriver.bundle` для `/Library/GPUBundles`.
+* **[`PhxBringup.kext-v0.2.0-alpha.zip`](https://github.com/luuumi-dev/amd-rdna3-macos-driver/releases/download/v0.2.0-alpha/PhxBringup.kext-v0.2.0-alpha.zip)**: Автономный кекст для OpenCore для отладки инициализации кремния и командных колец.
 
-### 3. Настройка загрузчика OpenCore
-В файле `config.plist` вашего OpenCore в секции `NVRAM -> Add -> 7C436110-AB2A-4BBB-A880-FE41995C9F82 -> boot-args` добавьте следующие параметры:
+### 3. Настройка OpenCore `boot-args`
+Добавьте аргументы загрузки в ваш `config.plist` по пути `NVRAM -> Add -> 7C436110-AB2A-4BBB-A880-FE41995C9F82 -> boot-args`:
 
 ```text
 keepsyms=1 revpatch=cpuname,sbvmm ipc_control_port_options=0 -amfipassbeta amfi_get_out_of_my_way=0x1 amfi=0x80 phxdebug=1
 ```
 
-* `amfi=0x80 amfi_get_out_of_my_way=0x1`: **Обязательно.** Отключает проверку целостности библиотек Apple Mobile File Integrity, позволяя системному процессу `WindowServer` и программам загружать сторонний Metal-бандл.
-* `phxdebug=1`: Активирует диагностические эндпоинты `sysctl` и низкоуровневые инструменты инициализации.
+Очищенный от персональных данных эталонный конфиг доступен в [`hardware/Sample.plist`](hardware/Sample.plist). Список сторонних необходимых кекстов с официальными ссылками находится в [`hardware/REQUIRED_KEXTS.md`](hardware/REQUIRED_KEXTS.md).
 
-### 4. Установка компонентов драйвера
+### 4. Развертывание компонентов драйвера
 
-Для полной работы аппаратного ускорения требуются три компонента:
-
-1. **Кекст ядра для EFI (`PhxBringup.kext`):**
-   Скопируйте `PhxBringup.kext` на ваш EFI-раздел в папку `EFI/OC/Kexts/` и пропишите его в `config.plist` в секции `Kernel -> Add`.
-2. **Системный кекст акселератора и фреймбуфера (`PhxAccel.kext`):**
-   Скопируйте `PhxAccel.kext` в папку `/Library/Extensions/` и обновите Auxiliary Kernel Collection:
+1. **Кекст для OpenCore (`PhxBringup.kext`):**
+   Скопируйте `PhxBringup.kext` в папку `EFI/OC/Kexts/` на вашем EFI-разделе и пропишите его в `config.plist` в секции `Kernel -> Add`.
+2. **Системный кекст акселератора (`PhxAccel.kext`):**
+   Скопируйте `PhxAccel.kext` в `/Library/Extensions/` и обновите системную коллекцию кекстов:
    ```bash
    sudo cp -R PhxAccel.kext /Library/Extensions/
    sudo chown -R root:wheel /Library/Extensions/PhxAccel.kext
    sudo kmutil install --volume-root / --repository /Library/Extensions
    ```
 3. **Бандл трансляции Metal (`NVMTLDriver.bundle`):**
-   Скопируйте `NVMTLDriver.bundle` в системную папку GPU-бандлов:
+   Скопируйте `NVMTLDriver.bundle` и каталог `nvmtl` в `/Library/GPUBundles/`:
    ```bash
    sudo mkdir -p /Library/GPUBundles
    sudo cp -R NVMTLDriver.bundle /Library/GPUBundles/
    sudo chown -R root:wheel /Library/GPUBundles/NVMTLDriver.bundle
    ```
 
-### 5. Проверка работы Metal и композитора
-После перезагрузки откройте Терминал и выполните диагностические команды:
+### 5. Команды для проверки в Terminal
+
+После перезагрузки откройте Terminal для проверки работы драйвера:
 
 ```bash
-# 1. Тест вычислений Metal Compute (4096 параллельных потоков на 780M)
+# 1. Проверка вычислительного пайплайна Metal (4096 рабочих групп на 780M)
 ./tools/mtlprobe/mtlprobe compute
 
 # Ожидаемый вывод:
 # [MTLPROBE] Device: AMD Radeon 780M Graphics (RADV PHOENIX)
 # [MTLPROBE] 4096/4096 correct.
 
-# 2. Тест 3D-растеризации геометрии Metal
-./tools/mtlprobe/mtlprobe render
-
-# Ожидаемый вывод:
-# [MTLPROBE] 3D pipeline compiled and executed on 780M.
-# [MTLPROBE] pixels: red 32640 blue 32896 other 0
-
-# 3. Проверка счётчика аппаратных кадров WindowServer
+# 2. Проверка аппаратных счетчиков кадров WindowServer
 sysctl debug.nvaccel_iop_ok debug.nvaccel_iop_fail debug.nvaccel_iop_copy_us
 
-# Ожидаемый вывод:
-# debug.nvaccel_iop_ok: > 1000  (кадры, аппаратно отрендеренные 780M)
+# Ожидаемый результат:
+# debug.nvaccel_iop_ok: > 1000  (кадры, отрендеренные ускорителем)
 # debug.nvaccel_iop_fail: 0
-# debug.nvaccel_iop_copy_us: ~1500 (1.5 мс на вывод кадра)
+# debug.nvaccel_iop_copy_us: ~1500 (1.5 мс потоковое копирование кадра)
 ```
-
-> [!TIP]
-> **Примечание по экрану входа:** В текущих альфа-сборках окно входа (`loginwindow`) может отображаться тёмным до момента авторизации. Рекомендуется включить **Автоматический вход** в настройках «Пользователи и группы» macOS, чтобы система сразу открывала ускоренный рабочий стол.
 
 ---
 
-## 🌟 Достигнутые вехи проекта (Октябрь 2026)
+## ⚠️ Риски безопасности и отключение AMFI
 
-Apple прекратила разработку драйверов AMD после RDNA 2 (Navi 21/23). Поколение RDNA 3 (Phoenix, Hawk Point, Strix Point) никогда официально не поддерживалось. Этот проект закрывает этот пробел:
+Для загрузки сторонних графических трансляторов в системный процесс `WindowServer` в macOS Sonoma и Tahoe необходимо передавать флаги `amfi=0x80` и `amfi_get_out_of_my_way=0x1`.
 
-| Веха | Статус | Подробности |
-| :--- | :---: | :--- |
-| **Кремний и микрокод (E1–E5)** | ✅ **ГОТОВО** | Автозагрузка прошивок PSP 13.0.4, RLC, SMU GfxImu, планировщик MES v11 (Micro Engine Scheduler), DMA-передачи через SDMA. |
-| **Виртуальная память GPU (E7)** | ✅ **ГОТОВО** | 4-уровневые таблицы страниц GPUVM в оперативной памяти с аппаратной когерентностью кэшей, изоляция процессов (VMID 8..15). |
-| **Vulkan 1.4 (E8 / RADV)** | ✅ **ГОТОВО** | Нативная Mesa RADV под Darwin с шейдерным компилятором ACO; подтверждён запуск шейдеров через `vkprobe`. |
-| **Metal 3D и Compute (M1)** | ✅ **ГОТОВО** | Аппаратные вычисления Metal compute (`mtlprobe` 4096/4096) и 3D-растеризация на кремнии (`AMD Radeon 780M Graphics`). |
-| **Композитинг WindowServer (M2)** | ✅ **АКТИВНО** | `WindowServer` рендерит весь интерфейс macOS через `CompositorMetal` на 780M. Нагрузка на CPU около 0%, скорость до 41+ FPS. |
-| **Дисплейный пайплайн и AGDC** | ✅ **ГОТОВО** | Собственный фреймбуфер `PhxAMDFB`, контроллер `PhxAGDC`, потоковый сброс кадров без задержек (~1.5 мс/кадр). |
-| **Официальное имя и профилировщик** | ✅ **ГОТОВО** | Кекст Build 28 публикует `AMD Radeon 780M` и объём VRAM напрямую в IORegistry и окно «Об этом Mac». |
+### Что при этом отключается
+* **Валидация библиотек (Library Validation):** Ослабление подсистемы Apple Mobile File Integrity (AMFI) позволяет системным процессам загружать библиотеки без подписи Apple или со сторонними ad-hoc сертификатами.
+* **Неработающие сервисы:** Системные функции, требующие жесткой проверки целостности платформы, перестают работать:
+  * Apple Pay и биометрическая авторизация Touch ID.
+  * Воспроизведение DRM-контента FairPlay (Apple TV+, Netflix 4K в Safari).
+  * Некоторые приложения из Mac App Store и инструменты разработчиков с включенным Hardened Runtime.
+* **Обновления системы:** Установка инкрементных OTA-обновлений macOS может завершаться с ошибкой при отключенном AMFI и модифицированном SIP.
+
+### Как вернуться к стандартному состоянию
+Если вам потребуется вернуть штатные механизмы безопасности macOS:
+1. Загрузитесь в OpenCore и удалите `amfi=0x80` и `amfi_get_out_of_my_way=0x1` из `boot-args`.
+2. Удалите `/Library/Extensions/PhxAccel.kext` и `/Library/GPUBundles/NVMTLDriver.bundle`.
+3. Очистите вспомогательную коллекцию кекстов командой: `sudo kmutil clear-staging`.
+
+---
+
+## 🔍 Что такое `NVMTLDriver.bundle`?
+
+Несмотря на префикс `NV` в названии файла, **`NVMTLDriver.bundle` НЕ является драйвером NVIDIA**.
+
+Префикс остался в наследство от исследовательской кодовой базы **NullMoth**, разработавшего архитектуру трансляции Vulkan в Metal для macOS. В данном проекте `NVMTLDriver.bundle` выполняет роль моста-транслятора:
+1. Он перехватывает вызовы Metal API от `WindowServer` и графических приложений macOS.
+2. Транслирует их в команды Vulkan, исполняемые адаптированным под Darwin драйвером **Mesa RADV** (`libvulkan_radeon.dylib`).
+3. Mesa RADV отправляет команды напрямую в аппаратные кольца AMD RDNA 3 через кекст `PhxBringup.kext`.
+
+---
+
+## ⚠️ Известные проблемы и проверенное железо
+
+* **Проверенное железо:** Ноутбук Firebat U6C (AMD Ryzen 7 7840HS / 8845HS, Radeon 780M GFX1103, матрица 2560x1600 120Hz eDP).
+* **Непроверенные устройства:** Ноутбуки Framework 13 AMD, ASUS ROG Ally, GPD Win, линейки Lenovo ThinkPad / Yoga на базе Phoenix. Работоспособность на них не подтверждена.
+* **Скорость вывода кадров:** Кадры `WindowServer` копируются в текущий фреймбуфер с помощью потоковых инструкций SSE/MOVNTI, обеспечивая около 41 FPS на встроенном дисплее.
+* **Внешние экраны:** Горячее подключение и звук по HDMI и USB-C DisplayPort Alt Mode находятся в экспериментальной разработке.
+* **Режим сна (Sleep / Wake):** Управление питанием при переходе в сон и пробуждении полноценно не тестировалось и может приводить к сбоям подсветки или экрана.
+* **Экран входа (Loginwindow):** При первой загрузке фон экрана входа может оставаться темным до авторизации. Рекомендуется включить **Автоматический вход** в настройках пользователей macOS.
+
+---
+
+## 🛠️ Сборка из исходников и воспроизводимость
+
+### Требования
+* **macOS:** Xcode 15+ или Command Line Tools с Apple Clang.
+* **Linux / Кросс-компиляция:** Clang 15+, Make, Python 3.9+.
+* **Заголовки ядра:** Репозиторий [MacKernelSDK](https://github.com/acidanthera/MacKernelSDK) для компиляции кекстов.
+
+### Команды сборки
+
+```bash
+# Сборка и запуск юнит-тестов (Linux или macOS)
+make test
+
+# Сборка PhxBringup.kext в macOS
+sh src/phxbringup/build.sh /path/to/MacKernelSDK
+
+# Сборка PhxAccel.kext в macOS
+sh src/phxaccel/build.sh /path/to/MacKernelSDK
+```
+
+Непрерывная интеграция автоматически проверяет компиляцию юнит-тестов при каждом коммите через [GitHub Actions](.github/workflows/ci.yml).
 
 ---
 
 ## 🏛️ Архитектура драйвера
 
-Стек состоит из трёх скоординированных уровней, связывающих закрытые графические фреймворки macOS с кремнием AMD RDNA 3:
-
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│               Пользовательские приложения macOS                        │
+│                   Пользовательские приложения macOS                    │
 │     (Finder, Safari, Metal-приложения, композитор WindowServer)        │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │ Metal API
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│  /Library/GPUBundles/NVMTLDriver.bundle (Трансляция Metal)             │
-│  ├── libnvmtl_translate.dylib                                          │
+│  /Library/GPUBundles/NVMTLDriver.bundle (Транслятор Metal-поверх-Vulkan)│
 │  └── /Library/GPUBundles/nvmtl/libvulkan_radeon.dylib (Mesa RADV 1.4)  │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │ IOKit UserClient ABI
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│  Кексты ядра macOS (IOKit / Mach-O):                                   │
-│  ├── PhxBringup.kext (Build 28 в EFI):                                 │
-│  │   ├── Загрузка прошивок через кольцо PSP 13.0.4 и память TMR        │
-│  │   ├── Управление планировщиком MES v11 (KIQ) и очереди команд       │
-│  │   └── 4-уровневый аллокатор таблиц страниц GPUVM (VMID 8..15)       │
-│  └── PhxAccel.kext (в Auxiliary Kernel Collection):                    │
-│      ├── PhxAMDFB (фреймбуфер экрана с тегом вендора AMD)              │
-│      ├── PhxAGDC (взаимодействие с AppleGraphicsDeviceControl)         │
-│      └── NMXAccel / NVDisplayPipe (ускоренный вывод кадров)            │
+│  Кексты ядра macOS (IOKit / Mach-O)                                    │
+│  ├── PhxBringup.kext (Build 29 в OpenCore EFI)                         │
+│  │   ├── Загрузчик прошивок PSP 13.0.4 и управление кольцами           │
+│  │   ├── Планировщик MES v11 и отправка в очередь KIQ                  │
+│  │   └── Выделение 4-уровневых таблиц GPUVM на процесс (VMID 8..15)    │
+│  └── PhxAccel.kext (Вспомогательная коллекция Auxiliary Kernel)        │
+│      ├── PhxAMDFB (Фреймбуфер IOFramebuffer с тегированием AMD)        │
+│      ├── PhxAGDC (Согласование дисплея AppleGraphicsDeviceControl)     │
+│      └── NMXAccel / NVDisplayPipe (Потоковый вывод кадров)             │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │ MMIO BAR0 / Doorbell BAR2
                                     ▼
 ┌────────────────────────────────────────────────────────────────────────┐
-│          Кремний AMD Radeon 780M (Hawk Point / Phoenix GFX1103)        │
-│          Матрица дисплея DCN 3.1.4 (2560x1600 @ 120Hz eDP)             │
+│         Кремний AMD Radeon 780M (Hawk Point / Phoenix GFX1103)         │
+│          Матрица DCN 3.1.4 (2560x1600 @ 120Hz eDP)                     │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 👥 Авторы и благодарности
+## 📄 Лицензии и благодарности
 
-* **Ведущий мейнтейнер и системное тестирование:** [@luuumi-dev](https://github.com/luuumi-dev)
-* **Низкоуровневая разработка ядра и драйвера:** Anthropic Claude (Opus 5.5) и Google DeepMind Gemini (Antigravity)
-* **Архитектурные исследования графики macOS:** [Cobalt64](https://cobalt64.com) (RDNA4 / Tahoe Metal) и **NullMoth** (архитектура IOAccelerator)
-* **Аппаратная спецификация и открытый код:** Команда разработчиков `amdgpu` в ядре Linux и проект Mesa 3D (команда RADV ACO)
-* **Сообщество OpenCore и Hackintosh:** [Acidanthera](https://github.com/acidanthera) и сообщество AMD-OSX
+Репозиторий распространяется под несколькими лицензиями в зависимости от компонента. Полный текст приведен в файле [LICENSE](LICENSE).
 
----
-
-## 📄 Лицензия
-
-Исходный код репозитория распространяется под лицензией MIT License. Части, унаследованные от NullMoth, регулируются лицензией PolyForm Noncommercial License 1.0.0. Компоненты Mesa RADV распространяются под лицензией MIT/X11.
+* **PhxBringup.kext и утилиты (`src/phxbringup`, `tools/phxctl`):** Распространяются под лицензией **GPL-2.0-only** или MIT, отражая совместимость с кодом Linux `amdgpu`.
+* **PhxAccel и патчи NVMTLDriver (`src/phxaccel`, `tools/nvmtl-patches`):** Основаны на разработках NullMoth и распространяются под некоммерческой лицензией **PolyForm Noncommercial License 1.0.0**.
+  ```
+  NullMoth NVIDIA driver for macOS
+  Copyright (c) 2026 NullMoth Systems.
+  SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
+  ```
+  *Коммерческое использование компонентов под данной лицензией строго запрещено.*
+* **Патчи Mesa (`mesa-patches-phoenix`):** Распространяются под оригинальной лицензией **MIT License** с сохранением копирайтов авторов Mesa.
+* **Благодарности:** Команде Linux `amdgpu`, разработчикам проекта Mesa 3D, сообществам [Acidanthera](https://github.com/acidanthera), [Cobalt64](https://cobalt64.com) и AMD-OSX.
