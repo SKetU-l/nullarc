@@ -15,14 +15,20 @@
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IORangeAllocator.h>
 #include <libkern/OSAtomic.h>
+#include <sys/sysctl.h>
 #include "nvrm_vram_abi.h"
 #include "nvrm_gpuva_abi.h"
 
 void phxAgdcInstall();   // phxagdc.cpp: the AppleGraphicsDeviceControl that reports this panel (debug.phxagdc)
 void phxAgdcRemove();
-void phxHoldInit(IOService *fb);   // phxagdc.cpp: debug.phxfb_hold keeps this framebuffer (and so the GPU) busy
+void phxHoldInit(IOService *fb, unsigned bootHoldSec);   // phxagdc.cpp: debug.phxfb_hold keeps this framebuffer (and so the GPU) busy
 
 #define PFBLOG(fmt, ...) IOLog("PhxFB: " fmt "\n", ##__VA_ARGS__)
+
+static int gAlias = 1;
+static bool gAliasSysctl;
+SYSCTL_INT(_debug, OID_AUTO, phxfb_alias, CTLFLAG_RW | CTLFLAG_LOCKED, &gAlias, 0,
+           "1 = frames are copied into the scan-out through its system-RAM address (the carve-out), 0 = through the GPU's BAR");
 
 // The class name carries "AMD": CoreDisplay tells the GPU vendor from the framebuffer's class name (Intel, AMD, NVDA,
 // AppleParavirt), and for any other name it turns IOPresentment off, which left the panel on the software compositor
@@ -30,7 +36,14 @@ void phxHoldInit(IOService *fb);   // phxagdc.cpp: debug.phxfb_hold keeps this f
 class PhxAMDFB : public IOFramebuffer {
     OSDeclareDefaultStructors(PhxAMDFB)
     IOPCIDevice *fPCI = nullptr;
-    IOMemoryMap *fSurfMap = nullptr;   // write-combined CPU view of the scan-out surface (frames land here)
+    IOMemoryMap *fSurfMap = nullptr;   // write-combined CPU view of the scan-out surface through the BAR
+    // The same surface through its system-RAM address: the 780M's VRAM is a carve-out of system memory, and amdgpu maps
+    // it there on APUs rather than through the BAR. Through the BAR a 2560x1600 frame took ~110 ms to copy (~7 fps, the
+    // whole desktop lagged, 2026-10-20). This view comes out write-back although it asks for write-combined (frames
+    // copied with plain stores stayed in the CPU cache: stripes), so the display pipe writes it with non-temporal stores.
+    IOMemoryMap *fAliasMap = nullptr;
+    unsigned fAliasTries = 0;
+    volatile UInt32 fAliasBusy = 0;
     struct Irq { IOFBInterruptProc proc = nullptr; OSObject *target = nullptr; void *ref = nullptr; };
     Irq fVbl, fConnect;
     thread_call_t fVblTimer = nullptr;
@@ -40,6 +53,7 @@ class PhxAMDFB : public IOFramebuffer {
     IOPhysicalAddress fBase = 0;
     uint32_t fWidth = 0, fHeight = 0, fRowBytes = 0;
     static constexpr uint64_t kFrameNs = 16666667ull;
+    static constexpr unsigned kBootHoldSec = 120;   // the boot daemon releases it sooner (debug.phxfb_hold=0)
     // The accelerator is NullMoth's, written against an NVIDIA RM: it backs each IOAccel surface with "VRAM" from the
     // framebuffer (nvAllocVram) and a GPU address from the RM (nvGpuVaAlloc/Map). On the 780M nothing on the GPU reads
     // those surfaces -- the display pipe copies finished frames by CPU, and RADV keeps its own GPU addresses in
@@ -226,12 +240,56 @@ public:
     // address in the GPU's VRAM aperture. With no address the pipe got no framebuffer resource, and IOAcceleratorFamily
     // marks a display pipe active only once one exists (init_framebuffer_resource sets +0x298): every WindowServer
     // transaction ended kIOReturnNotReady and no frame reached the panel (2026-10-20).
+    // The scan-out through the carve-out, once PhxBringup has published where the carve-out sits (phx-fb-phys) and only
+    // if that view holds the pixels the BAR shows. NULL (copy through the BAR) until then.
+    IOMemoryMap *aliasMap() {
+        if (fAliasMap || fAliasTries >= 3) return fAliasMap;
+        if (!OSCompareAndSwap(0, 1, &fAliasBusy)) return nullptr;
+        if (!fAliasMap && fAliasTries < 3) {
+            fAliasTries++;
+            uint64_t fbPhys = 0, barOff = ~0ull;
+            if (OSIterator *it = fPCI->getChildIterator(gIOServicePlane)) {
+                while (OSObject *o = it->getNextObject()) {
+                    IORegistryEntry *e = OSDynamicCast(IORegistryEntry, o);
+                    OSNumber *n = e ? OSDynamicCast(OSNumber, e->getProperty("phx-fb-phys")) : nullptr;
+                    if (n) { fbPhys = n->unsigned64BitValue(); break; }
+                }
+                it->release();
+            }
+            for (uint32_t i = 0; i < fPCI->getDeviceMemoryCount(); i++) {
+                IODeviceMemory *dm = fPCI->getDeviceMemoryWithIndex(i);
+                if (dm && fBase >= dm->getPhysicalAddress() && fBase - dm->getPhysicalAddress() < dm->getLength()) {
+                    barOff = fBase - dm->getPhysicalAddress();
+                    break;
+                }
+            }
+            const uint64_t phys = fbPhys + barOff, bytes = (uint64_t)fRowBytes * fHeight;
+            IOMemoryMap *m = nullptr;
+            if (fbPhys && barOff != ~0ull)
+                if (IODeviceMemory *dm = IODeviceMemory::withRange(phys, bytes)) { m = dm->map(kIOMapWriteCombineCache); dm->release(); }
+            if (m) {
+                const volatile uint32_t *a = (const volatile uint32_t *)m->getVirtualAddress();
+                const volatile uint32_t *b = (const volatile uint32_t *)fSurfMap->getVirtualAddress();
+                const uint64_t words = bytes / 4, step = words / 4096 ? words / 4096 : 1;
+                unsigned same = 0, nz = 0, n = 0;
+                for (uint64_t w = 0; w < words; w += step, n++) { const uint32_t x = a[w], y = b[w]; same += x == y; nz += y != 0; }
+                PFBLOG("alias: scan-out at BAR offset 0x%llx = system RAM 0x%llx: %u of %u samples match the BAR (%u non-zero)",
+                       barOff, phys, same, n, nz);
+                if (same == n && nz) fAliasMap = m; else m->release();
+            } else {
+                PFBLOG("alias: carve-out 0x%llx, scan-out BAR offset 0x%llx: no system-RAM view, copying through the BAR", fbPhys, barOff);
+            }
+        }
+        fAliasBusy = 0;
+        return fAliasMap;
+    }
     IOReturn callPlatformFunction(const OSSymbol *fn, bool wait, void *p1, void *p2, void *p3, void *p4) override {
         if (fn && fn->isEqualTo(NVRM_VRAM_FN_SCANOUT)) {
             NVRMVramRequest *r = (NVRMVramRequest *)p1;
             if (!r || r->version != NVRM_VRAM_ABI_VERSION) return kIOReturnBadArgument;
             if (!fSurfMap) return kIOReturnNotReady;
-            r->kva = (void *)fSurfMap->getVirtualAddress();
+            IOMemoryMap *alias = gAlias ? aliasMap() : nullptr;
+            r->kva = (void *)(alias ? alias : fSurfMap)->getVirtualAddress();
             r->phys = fBase; r->actualSize = round_page_64((uint64_t)fRowBytes * fHeight);
             r->width = fWidth; r->height = fHeight; r->pitch = fRowBytes;
             return kIOReturnSuccess;
@@ -345,8 +403,9 @@ bool PhxAMDFB::start(IOService *provider)
         { 1, kIOPMDeviceUsable, kIOPMPowerOn, kIOPMPowerOn, 0, 0, 0, 0, 0, 0, 0, 0 },
     };
     registerPowerDriver(this, states, 2);
-    phxHoldInit(this);
+    phxHoldInit(this, kBootHoldSec);
     phxAgdcInstall();
+    if (!gAliasSysctl) { sysctl_register_oid(&sysctl__debug_phxfb_alias); gAliasSysctl = true; }
     PFBLOG("panel published: %ux%u row %u at 0x%llx (vbl timer %s)", fWidth, fHeight, fRowBytes,
            (unsigned long long)fBase, fVblTimer ? "60 Hz" : "MISSING");
     return true;
@@ -357,6 +416,8 @@ void PhxAMDFB::stop(IOService *provider)
     fStopping = true;
     phxAgdcRemove();
     if (fVblTimer) { thread_call_cancel(fVblTimer); while (!thread_call_free(fVblTimer)) { thread_call_cancel(fVblTimer); IOSleep(5); } fVblTimer = nullptr; }
+    if (gAliasSysctl) { sysctl_unregister_oid(&sysctl__debug_phxfb_alias); gAliasSysctl = false; }
+    OSSafeReleaseNULL(fAliasMap);
     OSSafeReleaseNULL(fSurfMap);
     OSSafeReleaseNULL(fVa);
     IOFramebuffer::stop(provider);

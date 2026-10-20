@@ -18,10 +18,22 @@
 #include <IOKit/pci/IOPCIDevice.h>
 #include <libkern/OSAtomic.h>
 #include <pexpert/pexpert.h>
+#include <sys/sysctl.h>
 
 #include "PhxNativeABI.h"
 
-#define PHX_KEXT_BUILD 26u
+#define PHX_KEXT_BUILD 27u
+
+// debug.phxbos_flush: how a client's BOs are made coherent around each submission and each completed wait.
+// 2 = clflush every line (the bring-up way), 1 = clflushopt (the same lines, pipelined), 0 = none (the GPU maps system
+// memory snooped, kPteSysFlags). With clflush, WindowServer spent ~73% of its CPU here and composited ~13 fps (2026-10-20).
+static int gBosFlush = 1;
+static volatile SInt64 gBosFlushBytes;
+SYSCTL_INT(_debug, OID_AUTO, phxbos_flush, CTLFLAG_RW | CTLFLAG_LOCKED, &gBosFlush, 0,
+           "BO cache maintenance per submit/wait: 0 none, 1 clflushopt, 2 clflush");
+SYSCTL_QUAD(_debug, OID_AUTO, phxbos_flush_bytes, CTLFLAG_RD | CTLFLAG_LOCKED, (SInt64 *)&gBosFlushBytes,
+            "bytes of BOs flushed from the CPU caches");
+static volatile UInt32 gSysctlUp;
 
 // psp_gfx_rb_frame (64 B) — the ring entry the PSP reads. Only 5 fields are set; the rest stay zero
 // (Linux amdgpu_psp.c:3485: a non-zero cmd_buf_size makes the PSP silently drop the frame).
@@ -278,6 +290,11 @@ bool PhxBringup::start(IOService *provider) {
 }
 
 void PhxBringup::stop(IOService *provider) {
+    if (gSysctlUp) {
+        sysctl_unregister_oid(&sysctl__debug_phxbos_flush);
+        sysctl_unregister_oid(&sysctl__debug_phxbos_flush_bytes);
+        gSysctlUp = 0;
+    }
     clearRing();
     if (fbAper) {
         fbAper->release();
@@ -1022,6 +1039,12 @@ IOReturn PhxBringup::readRegs(uint32_t first, uint32_t count, uint32_t *out) {
 }
 
 IOReturn PhxBringup::newUserClient(task_t owningTask, void *securityID, UInt32 type, IOUserClient **handler) {
+    // the sysctls go up with the first client, from user space, rather than in start(): the bootloader injects this
+    // kext into the boot collection, and it starts long before the rest of BSD
+    if (!gSysctlUp && OSCompareAndSwap(0, 1, &gSysctlUp)) {
+        sysctl_register_oid(&sysctl__debug_phxbos_flush);
+        sysctl_register_oid(&sysctl__debug_phxbos_flush_bytes);
+    }
     if (type != PHXN_UC_TYPE)
         return kIOReturnBadArgument;
     IOAccelPhxNativeClient *client = OSTypeAlloc(IOAccelPhxNativeClient);
@@ -1719,16 +1742,28 @@ IOReturn IOAccelPhxNativeClient::doDbgClaim(IOExternalMethodArguments *a) {
 }
 
 // Write back and invalidate the CPU caches over every BO: CPU-written data must be in memory before the GPU reads
-// it, and the CPU must not read stale lines after the GPU wrote. Coarse, but BOs are few and small for now.
+// it, and the CPU must not read stale lines after the GPU wrote. Coarse: WindowServer's BOs (full-screen surfaces
+// among them) made this its hottest loop, hence debug.phxbos_flush.
 void IOAccelPhxNativeClient::flushBos() {
+    const int mode = gBosFlush;
+    if (!mode)
+        return;
+    uint64_t bytes = 0;
     for (uint32_t h = 1; h < PHXN_MAX_BOS; h++) {
         if (!bos[h].md)
             continue;
         const uint8_t *p = static_cast<const uint8_t *>(bos[h].md->getBytesNoCopy());
-        for (uint64_t o = 0; o < bos[h].size; o += 64)
-            __asm__ __volatile__("clflush (%0)" ::"r"(p + o) : "memory");
+        if (mode == 1) {
+            for (uint64_t o = 0; o < bos[h].size; o += 64)
+                __asm__ __volatile__("clflushopt (%0)" ::"r"(p + o) : "memory");
+        } else {
+            for (uint64_t o = 0; o < bos[h].size; o += 64)
+                __asm__ __volatile__("clflush (%0)" ::"r"(p + o) : "memory");
+        }
+        bytes += bos[h].size;
     }
     __asm__ __volatile__("mfence" ::: "memory");
+    OSAddAtomic64((SInt64)bytes, &gBosFlushBytes);
 }
 
 IOReturn IOAccelPhxNativeClient::doWaitSeq(IOExternalMethodArguments *a) {
