@@ -222,14 +222,17 @@ public:
         if (flags) *flags = kDisplayModeValidFlag | kDisplayModeSafeFlag | kDisplayModeDefaultFlag;
         return kIOReturnSuccess;
     }
-    // The accelerator's display pipe asks for the scan-out: a CPU mapping and no VRAM address, so frames are copied in.
+    // The accelerator's display pipe asks for the scan-out: its CPU mapping (frames are copied in) and its physical
+    // address in the GPU's VRAM aperture. With no address the pipe got no framebuffer resource, and IOAcceleratorFamily
+    // marks a display pipe active only once one exists (init_framebuffer_resource sets +0x298): every WindowServer
+    // transaction ended kIOReturnNotReady and no frame reached the panel (2026-10-20).
     IOReturn callPlatformFunction(const OSSymbol *fn, bool wait, void *p1, void *p2, void *p3, void *p4) override {
         if (fn && fn->isEqualTo(NVRM_VRAM_FN_SCANOUT)) {
             NVRMVramRequest *r = (NVRMVramRequest *)p1;
             if (!r || r->version != NVRM_VRAM_ABI_VERSION) return kIOReturnBadArgument;
             if (!fSurfMap) return kIOReturnNotReady;
             r->kva = (void *)fSurfMap->getVirtualAddress();
-            r->phys = 0; r->actualSize = 0;
+            r->phys = fBase; r->actualSize = round_page_64((uint64_t)fRowBytes * fHeight);
             r->width = fWidth; r->height = fHeight; r->pitch = fRowBytes;
             return kIOReturnSuccess;
         }
@@ -256,7 +259,9 @@ static bool takeBootArming()
     OSSafeReleaseNULL(o);
     if (armed) {
         opts->removeProperty("phxfb-boot");
-        if (OSString *why = OSString::withCString("phxfb")) { opts->setProperty(kIONVRAMSyncNowPropertyKey, why); why->release(); }
+        // the forced commit: the throttled one (IONVRAM-SYNCNOW) left the variable in flash once, and the boot after a
+        // panic took the panel again (2026-10-20)
+        if (OSString *why = OSString::withCString("phxfb")) { opts->setProperty("IONVRAM-FORCESYNCNOW-PROPERTY", why); why->release(); }
         o = opts->copyProperty("phxfb-boot");
         stuck = o != nullptr;
         PFBLOG("NVRAM phxfb-boot taken (%s)", stuck ? "STILL SET: removal refused, not taking the panel" : "removed and committed");
@@ -315,6 +320,9 @@ bool PhxAMDFB::start(IOService *provider)
         if (!found) { PFBLOG("the console surface is in none of the GPU's BARs: leaving the firmware framebuffer"); return false; }
         base = found;
     }
+    // early in boot the platform expert hands out the physical address with a flag in its low bits (0x820000001): taken
+    // as is, every row WindowServer drew landed one byte off and the panel showed swapped colours (2026-10-20)
+    base &= ~(uint64_t)PAGE_MASK;
     fBase = (IOPhysicalAddress)base;
     PFBLOG("console: %ux%u row %u depth %lu at physical 0x%llx", fWidth, fHeight, fRowBytes, v.v_depth, (unsigned long long)fBase);
     if (IODeviceMemory *sm = IODeviceMemory::withRange(fBase, (IOPhysicalLength)fRowBytes * fHeight)) {

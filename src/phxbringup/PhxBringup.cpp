@@ -21,7 +21,7 @@
 
 #include "PhxNativeABI.h"
 
-#define PHX_KEXT_BUILD 25u
+#define PHX_KEXT_BUILD 26u
 
 // psp_gfx_rb_frame (64 B) — the ring entry the PSP reads. Only 5 fields are set; the rest stay zero
 // (Linux amdgpu_psp.c:3485: a non-zero cmd_buf_size makes the PSP silently drop the frame).
@@ -1755,8 +1755,10 @@ IOReturn IOAccelPhxNativeClient::doWaitSeq(IOExternalMethodArguments *a) {
             retired = owner->gpuRetired();
         }
         if (retired >= target) {
-            flushBos();   // drop CPU cache lines so the CPU sees what the GPU wrote
+            // drop CPU cache lines so the CPU sees what the GPU wrote; under the lock, as another thread of the same
+            // client (WindowServer) freed a BO mid-flush and the walk dereferenced its NULL descriptor (panic 2026-10-20)
             IOLockLock(lock);
+            flushBos();
             if (pendFenceSeq && pendFenceSeq <= retired) {
                 Bo *fb = findBo(pendFenceHandle);
                 if (fb && pendFenceOffset + 8 <= fb->size)
