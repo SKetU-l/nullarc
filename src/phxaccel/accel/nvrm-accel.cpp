@@ -984,7 +984,7 @@ IOReturn NVDisplayPipe::performTransaction(IOAccelDisplayPipeTransaction2 *txn)
     OSObject  *ro = txn->getPlaneResource(0, 0);
     if (!s && !ro) { OSAddAtomic64(1, &gCntIopEmpty); return kIOReturnSuccess; }
 
-    const volatile unsigned int *src = nullptr; unsigned w = 0, h = 0, pitch = 0; bool fromRes = false;
+    const volatile unsigned int *src = nullptr; unsigned w = 0, h = 0, pitch = 0; bool fromRes = false, l10r = false;
     NVResource *res = OSDynamicCast(NVResource, ro);
     NVVidMemory *vm = res ? nvres_vidmem(res) : nullptr;
     static SInt32 gIopK6Logs;
@@ -1018,7 +1018,10 @@ IOReturn NVDisplayPipe::performTransaction(IOAccelDisplayPipeTransaction2 *txn)
         nvSurfWaitReady(s->getSurfaceID());   // a copied frame is read here, so its GPU work must be done first
         if (!nvAccelSurfCopyReady(s, head)) return kIOReturnSuccess;
         const unsigned fmt = s->getPixelFormat();
-        if (fmt != 0x42475241u) NVIOP_FAIL(kIOReturnUnsupported, "surface 0x%x format 0x%08x is not BGRA", s->getSurfaceID(), fmt);
+        // WindowServer moves the display surface to 10-bit 'l10r' (ARGB2101010) once colour management is up; the panel
+        // is 8-bit XRGB, so those frames are narrowed while copied
+        l10r = fmt == 0x6C313072u;
+        if (fmt != 0x42475241u && !l10r) NVIOP_FAIL(kIOReturnUnsupported, "surface 0x%x format 0x%08x is not BGRA or l10r", s->getSurfaceID(), fmt);
         const unsigned long long W = s->getWidth(), H = s->getHeight(), P = s->getBytesPerRow();
         if (!W || !H || P < 4 || W > 16384 || H > 16384 || P > 16384ull * 8) NVIOP_FAIL(kIOReturnBadArgument, "surface geometry %llux%llu pitch %llu", W, H, P);
         if (P < 4 * W || (P & 3)) NVIOP_FAIL(kIOReturnBadArgument, "surface %llux%llu: row pitch %llu is under 4*W or not word-aligned", W, H, P);
@@ -1046,7 +1049,14 @@ IOReturn NVDisplayPipe::performTransaction(IOAccelDisplayPipeTransaction2 *txn)
     for (unsigned y = 0; y < h; y++) {
         const volatile unsigned int *sp = src + (unsigned long)y * spr;
         volatile unsigned int *dp = d + (unsigned long)y * dpr;
-        for (unsigned x = 0; x < words; x++) dp[x] = sp[x];
+        if (l10r) {
+            for (unsigned x = 0; x < words; x++) {
+                const unsigned v = sp[x];
+                dp[x] = 0xff000000u | ((v >> 6) & 0xff0000u) | ((v >> 4) & 0xff00u) | ((v >> 2) & 0xffu);
+            }
+        } else {
+            for (unsigned x = 0; x < words; x++) dp[x] = sp[x];
+        }
     }
     OSAddAtomic64(1, fromRes ? &gCntIopSrcRes : &gCntIopSrcSurf);
     const SInt64 n = OSAddAtomic64(1, &gCntIopOk);
