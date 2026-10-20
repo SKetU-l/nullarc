@@ -24,6 +24,7 @@ class PhxFB : public IOFramebuffer {
     thread_call_t fVblTimer = nullptr;
     uint64_t fVblNext = 0;
     volatile bool fStopping = false;
+    bool fBeside = false;   // another framebuffer (the firmware's IONDRV one) already drives this GPU: not the console
     IOPhysicalAddress fBase = 0;
     uint32_t fWidth = 0, fHeight = 0, fRowBytes = 0;
     static constexpr uint64_t kFrameNs = 16666667ull;
@@ -42,7 +43,7 @@ public:
     bool start(IOService *provider) override;
     void stop(IOService *provider) override;
     IOReturn enableController() override { return kIOReturnSuccess; }
-    bool isConsoleDevice() override { return true; }
+    bool isConsoleDevice() override { return !fBeside; }
     IODeviceMemory *getApertureRange(IOPixelAperture aperture) override {
         if (aperture != kIOFBSystemAperture) return nullptr;
         return IODeviceMemory::withRange(fBase, (IOPhysicalLength)fRowBytes * fHeight);
@@ -97,11 +98,6 @@ public:
         handleEvent(ordinal ? kIOFBNotifyDidPowerOn : kIOFBNotifyWillPowerOff);
         return kIOPMAckImplied;
     }
-    // The base class's power-change interest handlers reach its controller state, which this framebuffer never set up:
-    // IOFramebuffer::powerStateWillChangeTo dereferenced NULL (+0x120) from a PM callout (panic 2026-10-20). The panel has
-    // nothing to power: acknowledge at once.
-    IOReturn powerStateWillChangeTo(IOPMPowerFlags, unsigned long, IOService *) override { return kIOPMAckImplied; }
-    IOReturn powerStateDidChangeTo(IOPMPowerFlags, unsigned long, IOService *) override { return kIOPMAckImplied; }
     IOReturn setAttribute(IOSelect attribute, uintptr_t value) override {
         if (attribute == kIOWindowServerActiveAttribute) return kIOReturnSuccess;
         if (attribute == kIOPowerAttribute) {
@@ -164,6 +160,11 @@ bool PhxFB::start(IOService *provider)
     if (PE_parse_boot_argn("-phxfboff", arg, sizeof arg)) { PFBLOG("-phxfboff: leaving the firmware framebuffer"); return false; }
     fPCI = OSDynamicCast(IOPCIDevice, provider);
     if (!fPCI) return false;
+    if (OSIterator *it = fPCI->getChildIterator(gIOServicePlane)) {
+        while (OSObject *o = it->getNextObject())
+            if (o != this && OSDynamicCast(IOFramebuffer, o)) fBeside = true;
+        it->release();
+    }
     PE_Video v;
     bzero(&v, sizeof(v));
     IOPlatformExpert *pe = getPlatform();
@@ -207,9 +208,12 @@ bool PhxFB::start(IOService *provider)
         fSurfMap = sm->map(kIOMapWriteCombineCache); sm->release();
     }
     if (!fSurfMap) { PFBLOG("the console surface at 0x%llx would not map write-combined", (unsigned long long)fBase); return false; }
-    if (!IOFramebuffer::start(provider)) { OSSafeReleaseNULL(fSurfMap); return false; }
+    // IOFramebuffer::start makes the framebuffer's controller only from a dependent ID that is already set
+    // (IOFBController::copyController(kDepIDCreate)); without one the controller stays NULL and the first power-change
+    // callout dereferences it (IOFramebuffer::powerStateWillChangeTo, panic 2026-10-20)
     setProperty("IOFBDependentID", 0x50485846ull << 32 | 1, 64);   // 'PHXF'
     setProperty("IOFBDependentIndex", 0ull, 32);
+    if (!IOFramebuffer::start(provider)) { OSSafeReleaseNULL(fSurfMap); return false; }
     setProperty("built-in", kOSBooleanTrue);
     fVblTimer = thread_call_allocate(vblFire, this);
     if (fVblTimer) { uint64_t d; clock_interval_to_deadline((uint32_t)(kFrameNs / 1000), kMicrosecondScale, &d); fVblNext = d; thread_call_enter_delayed(fVblTimer, d); }
