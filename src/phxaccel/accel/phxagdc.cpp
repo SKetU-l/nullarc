@@ -8,6 +8,7 @@
 #include <IOKit/pci/IOPCIDevice.h>
 #include <sys/sysctl.h>
 #include <kern/thread_call.h>
+#include <kern/clock.h>
 #include <libkern/OSAtomic.h>
 #include "AppleGraphicsDeviceControl_re.h"
 #include "nvrm-agdc-k5.h"
@@ -176,17 +177,41 @@ SYSCTL_INT(_debug, OID_AUTO, phxagdc_last_refused, CTLFLAG_RD | CTLFLAG_LOCKED, 
 // PhxFB stayed "no accelerator" and CoreDisplay composited it in software however the accelerator came up later
 // (GPUWranglerGPUGetFramebufferAccelIndex = 0, 2026-10-20). A busy hold on PhxFB keeps the PCI device from going
 // quiet; releasing it after the accelerator is up lets the wrangler see it. Write 1 to hold, 0 to release.
+// At boot PhxAMDFB starts held, so GPUWrangler publishes the GPU (and WindowServer opens the panel) only after the
+// boot daemon has brought the GPU up, started NMXAccel and armed it, and WindowServer composites on the 780M from its
+// first start. The daemon releases the hold; a timer releases it anyway so a failed bring-up costs a delay, not a boot.
 static IOService *gHoldFB = nullptr;
 static int gHold = 0;
-void phxHoldInit(IOService *fb) { gHoldFB = fb; }
+static IOLock *gHoldLock = nullptr;
+static thread_call_t gHoldTimer = nullptr;
+static void holdSet(bool on, const char *why)
+{
+    if (!gHoldLock || !gHoldFB) return;
+    IOLockLock(gHoldLock);
+    if (on && !gHold) { gHold = 1; gHoldFB->adjustBusy(1); AGLOG("busy hold on PhxFB (%s): the GPU stays busy", why); }
+    else if (!on && gHold) { gHold = 0; gHoldFB->adjustBusy(-1); AGLOG("busy hold released (%s): the GPU may go quiet", why); }
+    IOLockUnlock(gHoldLock);
+}
+static void holdExpired(thread_call_param_t, thread_call_param_t) { holdSet(false, "timeout"); }
+void phxHoldInit(IOService *fb, unsigned bootHoldSec)
+{
+    if (!gHoldLock) gHoldLock = IOLockAlloc();
+    gHoldFB = fb;
+    if (!bootHoldSec || !gHoldLock) return;
+    if (!gHoldTimer) gHoldTimer = thread_call_allocate(holdExpired, nullptr);
+    holdSet(true, "boot");
+    if (gHoldTimer) {
+        uint64_t d; clock_interval_to_deadline(bootHoldSec, kSecondScale, &d);
+        thread_call_enter_delayed(gHoldTimer, d);
+    }
+}
 static int phxhold_sysctl SYSCTL_HANDLER_ARGS
 {
     int v = gHold;
     int err = sysctl_handle_int(oidp, &v, 0, req);
     if (err || !req->newptr) return err;
     if (!gHoldFB) return ENXIO;
-    if (v && !gHold) { gHold = 1; gHoldFB->adjustBusy(1); AGLOG("busy hold on PhxFB: the GPU stays busy"); }
-    else if (!v && gHold) { gHold = 0; gHoldFB->adjustBusy(-1); AGLOG("busy hold released: the GPU may go quiet"); }
+    holdSet(v != 0, "sysctl");
     return 0;
 }
 SYSCTL_PROC(_debug, OID_AUTO, phxfb_hold, CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_LOCKED | CTLFLAG_KERN, NULL, 0, phxhold_sysctl, "I",
@@ -210,7 +235,8 @@ void phxAgdcRemove()
     sysctl_unregister_oid(&sysctl__debug_phxagdc_fb_replies); sysctl_unregister_oid(&sysctl__debug_phxagdc_refused);
     sysctl_unregister_oid(&sysctl__debug_phxagdc_last_refused); sysctl_unregister_oid(&sysctl__debug_phxagdc_k5);
     sysctl_unregister_oid(&sysctl__debug_phxfb_hold);
-    if (gHold && gHoldFB) { gHold = 0; gHoldFB->adjustBusy(-1); }
+    if (gHoldTimer) { thread_call_cancel(gHoldTimer); thread_call_free(gHoldTimer); gHoldTimer = nullptr; }
+    holdSet(false, "stop");
     gHoldFB = nullptr;
     gSysctls = false;
     if (gCall) {

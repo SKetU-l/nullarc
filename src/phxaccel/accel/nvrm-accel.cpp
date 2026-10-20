@@ -961,6 +961,8 @@ IOReturn NVDisplayPipe::validateTransaction(IOAccelDisplayPipeTransaction2 *)
 }
 
 static bool nvAccelIopAsyncBusy(const void *pipe);
+static int gIopBench;   // debug.nvaccel_iop_bench: 1 = time a read-only pass over the next copied frame's source
+static SInt64 gIopReadUs, gIopCopyUs, gIopCopyUsMax, gIopCopyUsSum;
 bool NVDisplayPipe::isTransactionComplete(IOAccelDisplayPipeTransaction2 *)
 {
     return gNvIop != 0 && !nvAccelIopAsyncBusy(this);
@@ -1046,17 +1048,53 @@ IOReturn NVDisplayPipe::performTransaction(IOAccelDisplayPipeTransaction2 *txn)
     const unsigned words = (((pitch < q.pitch) ? pitch : q.pitch) & ~3u) / 4;
     const unsigned spr = pitch / 4, dpr = q.pitch / 4;
     volatile unsigned int *d = (volatile unsigned int *)q.kva;
+    if (gIopBench) {   // one read-only pass over the source first: tells a slow read side from a slow write side
+        gIopBench = 0;
+        const uint64_t r0 = mach_absolute_time();
+        unsigned sum = 0;
+        for (unsigned y = 0; y < h; y++) for (unsigned x = 0; x < words; x++) sum += src[(unsigned long)y * spr + x];
+        uint64_t ns; absolutetime_to_nanoseconds(mach_absolute_time() - r0, &ns);
+        gIopReadUs = (SInt64)(ns / 1000);
+        ALOG("iop: bench: reading the %ux%u source took %llu us (sum 0x%x)", w, h, ns / 1000, sum);
+    }
+    const uint64_t t0 = mach_absolute_time();
+    // 8 bytes (two pixels) per access when both sides allow it: half the uncached-side transactions of the dword loop.
+    // Non-temporal stores (movnti, general registers only): the scan-out's system-RAM view (PhxFB) maps write-back
+    // whatever cache mode it asks for, and plain stores left the frame in the CPU cache while the panel scanned the stale
+    // DRAM under it, in stripes (2026-10-20). Through the BAR (uncached) they behave as plain stores.
+    const bool wide = ((((uintptr_t)src | (uintptr_t)d) & 7) == 0) && !(spr & 1) && !(dpr & 1);
     for (unsigned y = 0; y < h; y++) {
         const volatile unsigned int *sp = src + (unsigned long)y * spr;
         volatile unsigned int *dp = d + (unsigned long)y * dpr;
-        if (l10r) {
-            for (unsigned x = 0; x < words; x++) {
-                const unsigned v = sp[x];
-                dp[x] = 0xff000000u | ((v >> 6) & 0xff0000u) | ((v >> 4) & 0xff00u) | ((v >> 2) & 0xffu);
+        unsigned x = 0;
+        if (wide) {
+            const volatile uint64_t *sq = (const volatile uint64_t *)sp;
+            uint64_t *dq = (uint64_t *)(uintptr_t)dp;
+            const unsigned pairs = words / 2;
+            if (l10r) {
+                for (unsigned i = 0; i < pairs; i++) {
+                    const uint64_t v = sq[i];
+                    const uint64_t px = ((v >> 6) & 0x00ff000000ff0000ull) | ((v >> 4) & 0x0000ff000000ff00ull) | ((v >> 2) & 0x000000ff000000ffull);
+                    __asm__ __volatile__("movnti %1, %0" : "=m"(dq[i]) : "r"(0xff000000ff000000ull | px));
+                }
+            } else {
+                for (unsigned i = 0; i < pairs; i++) __asm__ __volatile__("movnti %1, %0" : "=m"(dq[i]) : "r"((uint64_t)sq[i]));
             }
-        } else {
-            for (unsigned x = 0; x < words; x++) dp[x] = sp[x];
+            x = pairs * 2;
         }
+        unsigned int *dw = (unsigned int *)(uintptr_t)dp;
+        for (; x < words; x++) {
+            const unsigned v = sp[x];
+            const unsigned px = l10r ? 0xff000000u | ((v >> 6) & 0xff0000u) | ((v >> 4) & 0xff00u) | ((v >> 2) & 0xffu) : v;
+            __asm__ __volatile__("movnti %1, %0" : "=m"(dw[x]) : "r"(px));
+        }
+    }
+    __asm__ __volatile__("sfence" ::: "memory");   // the frame is in DRAM before the transaction completes
+    {
+        uint64_t ns; absolutetime_to_nanoseconds(mach_absolute_time() - t0, &ns);
+        const SInt64 us = (SInt64)(ns / 1000);
+        gIopCopyUs = us; OSAddAtomic64(us, &gIopCopyUsSum);
+        if (us > gIopCopyUsMax) gIopCopyUsMax = us;
     }
     OSAddAtomic64(1, fromRes ? &gCntIopSrcRes : &gCntIopSrcSurf);
     const SInt64 n = OSAddAtomic64(1, &gCntIopOk);
@@ -1150,6 +1188,11 @@ NVACCEL_CNT(nvaccel_iop_src_surf,     gCntIopSrcSurf,     "K3: frames sourced fr
 NVACCEL_CNT(nvaccel_iop_blank,        gCntIopBlank,       "K6: frames copied whose 64 samples were all ONE colour (a blank frame)");
 static SInt64 gCntIopCopySkip;
 NVACCEL_CNT(nvaccel_iop_copy_skip,    gCntIopCopySkip,    "frames kept on the panel because the surface's newest pixels were not yet in system memory");
+SYSCTL_INT(_debug, OID_AUTO, nvaccel_iop_bench, CTLFLAG_RW | CTLFLAG_LOCKED, &gIopBench, 0, "1 = time a read-only pass over the next copied frame's source (nvaccel_iop_read_us)");
+NVACCEL_CNT(nvaccel_iop_read_us,      gIopReadUs,         "the last bench: microseconds to read one frame's source");
+NVACCEL_CNT(nvaccel_iop_copy_us,      gIopCopyUs,         "microseconds the last copied frame took");
+NVACCEL_CNT(nvaccel_iop_copy_us_max,  gIopCopyUsMax,      "the slowest copied frame, microseconds");
+NVACCEL_CNT(nvaccel_iop_copy_us_sum,  gIopCopyUsSum,      "microseconds spent copying frames (over nvaccel_iop_src_surf + nvaccel_iop_src_res frames)");
 static int    gIopFlip = 0;
 static SInt64 gCntIopFlip, gCntIopFlipHome, gCntIopFlipNo[8];
 SYSCTL_INT(_debug, OID_AUTO, nvaccel_iop_flip, CTLFLAG_RW | CTLFLAG_LOCKED | CTLFLAG_KERN, &gIopFlip, 0, "1 = scan the composited IOSurface out of its own VRAM (no copy)");
@@ -1295,6 +1338,9 @@ static void nvaccelInstallSysctl(void)
     sysctl_register_oid(&sysctl__debug_nvaccel_iop_empty);
     sysctl_register_oid(&sysctl__debug_nvaccel_iop_src_res);    sysctl_register_oid(&sysctl__debug_nvaccel_iop_src_surf);
     sysctl_register_oid(&sysctl__debug_nvaccel_iop_blank);      sysctl_register_oid(&sysctl__debug_nvaccel_iop_copy_skip);
+    sysctl_register_oid(&sysctl__debug_nvaccel_iop_bench);      sysctl_register_oid(&sysctl__debug_nvaccel_iop_read_us);
+    sysctl_register_oid(&sysctl__debug_nvaccel_iop_copy_us);    sysctl_register_oid(&sysctl__debug_nvaccel_iop_copy_us_max);
+    sysctl_register_oid(&sysctl__debug_nvaccel_iop_copy_us_sum);
     sysctl_register_oid(&sysctl__debug_nvaccel_iop_flip);       sysctl_register_oid(&sysctl__debug_nvaccel_iop_flips);
     sysctl_register_oid(&sysctl__debug_nvaccel_iop_flip_home);  sysctl_register_oid(&sysctl__debug_nvaccel_iop_flip_lock);
     sysctl_register_oid(&sysctl__debug_nvaccel_iop_flip_novram); sysctl_register_oid(&sysctl__debug_nvaccel_iop_flip_stale);
