@@ -7,6 +7,7 @@
 #include <fstream>
 #include <vector>
 #include <cassert>
+#include <cstdlib>
 #include <cstring>
 
 using namespace rdna3;
@@ -26,6 +27,20 @@ static std::vector<uint8_t> read_file(const std::string &path) {
     return buffer;
 }
 
+// Firmware fixtures are AMD's redistributable linux-firmware blobs for Phoenix
+// (GC 11.0.1, SDMA 6.0.1, DCN 3.1.4). They are not committed: run
+// `make fixtures` (tools/fetch_test_firmware.sh) to download them.
+static const char *kFixtureDir = "tests/fixtures/phoenix/";
+
+static std::vector<uint8_t> read_fixture(const std::string &name) {
+    return read_file(std::string(kFixtureDir) + name);
+}
+
+static bool fixtures_present() {
+    std::ifstream probe(std::string(kFixtureDir) + "gc_11_0_1_rlc.bin", std::ios::binary);
+    return probe.is_open();
+}
+
 static void test_null_and_zero_inputs() {
     UcodePayload out[kMaxUcodePayloadsPerFile];
     uint8_t dummy[128] = {};
@@ -38,7 +53,7 @@ static void test_null_and_zero_inputs() {
 }
 
 static void test_phoenix_rlc() {
-    auto bin = read_file("tests/fixtures/phoenix/gc_11_0_3_rlc.bin");
+    auto bin = read_fixture("gc_11_0_1_rlc.bin");
     assert(!bin.empty());
 
     UcodePayload out[kMaxUcodePayloadsPerFile];
@@ -58,7 +73,7 @@ static void test_phoenix_rlc() {
 static void test_phoenix_cp_rs64() {
     // PFP
     {
-        auto bin = read_file("tests/fixtures/phoenix/gc_11_0_3_pfp.bin");
+        auto bin = read_fixture("gc_11_0_1_pfp.bin");
         assert(!bin.empty());
         UcodePayload out[kMaxUcodePayloadsPerFile];
         uint32_t count = rdna3_ucode_extract(kHostFwFile_CP_PFP, bin.data(), bin.size(), out);
@@ -73,7 +88,7 @@ static void test_phoenix_cp_rs64() {
 
     // ME
     {
-        auto bin = read_file("tests/fixtures/phoenix/gc_11_0_3_me.bin");
+        auto bin = read_fixture("gc_11_0_1_me.bin");
         assert(!bin.empty());
         UcodePayload out[kMaxUcodePayloadsPerFile];
         uint32_t count = rdna3_ucode_extract(kHostFwFile_CP_ME, bin.data(), bin.size(), out);
@@ -88,7 +103,7 @@ static void test_phoenix_cp_rs64() {
 
     // MEC
     {
-        auto bin = read_file("tests/fixtures/phoenix/gc_11_0_3_mec.bin");
+        auto bin = read_fixture("gc_11_0_1_mec.bin");
         assert(!bin.empty());
         UcodePayload out[kMaxUcodePayloadsPerFile];
         uint32_t count = rdna3_ucode_extract(kHostFwFile_CP_MEC, bin.data(), bin.size(), out);
@@ -106,7 +121,7 @@ static void test_phoenix_cp_rs64() {
 }
 
 static void test_phoenix_sdma() {
-    auto bin = read_file("tests/fixtures/phoenix/sdma_6_0_3.bin");
+    auto bin = read_fixture("sdma_6_0_1.bin");
     assert(!bin.empty());
 
     UcodePayload out[kMaxUcodePayloadsPerFile];
@@ -124,7 +139,7 @@ static void test_phoenix_sdma() {
 }
 
 static void test_phoenix_imu() {
-    auto bin = read_file("tests/fixtures/phoenix/gc_11_0_3_imu.bin");
+    auto bin = read_fixture("gc_11_0_1_imu.bin");
     assert(!bin.empty());
 
     UcodePayload out[kMaxUcodePayloadsPerFile];
@@ -141,7 +156,7 @@ static void test_phoenix_imu() {
 }
 
 static void test_phoenix_dmcub() {
-    auto bin = read_file("tests/fixtures/phoenix/dcn_3_1_4_dmcub.bin");
+    auto bin = read_fixture("dcn_3_1_4_dmcub.bin");
     assert(!bin.empty());
 
     UcodePayload out[kMaxUcodePayloadsPerFile];
@@ -153,7 +168,7 @@ static void test_phoenix_dmcub() {
 }
 
 static void test_adversarial_truncation() {
-    auto bin = read_file("tests/fixtures/phoenix/sdma_6_0_3.bin");
+    auto bin = read_fixture("sdma_6_0_1.bin");
     assert(!bin.empty());
 
     UcodePayload out[kMaxUcodePayloadsPerFile];
@@ -168,7 +183,7 @@ static void test_adversarial_truncation() {
 }
 
 static void test_fuzzer() {
-    auto original = read_file("tests/fixtures/phoenix/gc_11_0_3_rlc.bin");
+    auto original = read_fixture("gc_11_0_1_rlc.bin");
     assert(!original.empty());
 
     UcodePayload out[kMaxUcodePayloadsPerFile];
@@ -208,6 +223,16 @@ static void test_fuzzer() {
 int main() {
     std::cout << "=== Running RDNA3 / GFX1103 Firmware Extractor Tests ===" << std::endl;
     test_null_and_zero_inputs();
+    if (!fixtures_present()) {
+        if (std::getenv("REQUIRE_FIXTURES")) {
+            std::cerr << "[FAIL] firmware fixtures missing in " << kFixtureDir
+                      << " (run `make fixtures`)" << std::endl;
+            return 1;
+        }
+        std::cout << "[SKIP] firmware-based tests: no fixtures in " << kFixtureDir
+                  << " (run `make fixtures` to enable)" << std::endl;
+        return 0;
+    }
     test_phoenix_rlc();
     test_phoenix_cp_rs64();
     test_phoenix_sdma();

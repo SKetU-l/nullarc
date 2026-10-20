@@ -10,7 +10,7 @@ TESTS = $(TEST_BIN_DIR)/test_rdna3_discovery_uma \
         $(TEST_BIN_DIR)/test_rdna3_ucode \
         $(TEST_BIN_DIR)/test_r3n_abi
 
-.PHONY: all test clean kext
+.PHONY: all test clean kext fixtures
 
 all: test
 
@@ -36,6 +36,9 @@ test: $(TESTS)
 		$$t || exit 1; \
 	done
 	@echo "All unit tests passed successfully!"
+
+fixtures:
+	sh tools/fetch_test_firmware.sh tests/fixtures/phoenix
 
 kext:
 	@echo "Building PhxBringup.kext..."
