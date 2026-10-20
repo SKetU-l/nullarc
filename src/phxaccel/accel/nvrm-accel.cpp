@@ -56,7 +56,6 @@ void clock_interval_to_deadline(uint32_t interval, uint32_t scale_factor, uint64
 uint64_t mach_absolute_time(void);
 void absolutetime_to_nanoseconds(uint64_t abstime, uint64_t *result);
 void proc_selfname(char *buf, int size);
-int ml_set_interrupts_enabled(int enable);
 }
 static volatile SInt64 gCntVmAlloc, gCntVmAllocBytes, gCntVmDealloc, gCntVmDeallocBytes, gCntVmRefused,
                        gCntResNew, gCntResFree, gCntMapCommit, gCntMapRelease, gCntMapFree;
@@ -964,12 +963,14 @@ IOReturn NVDisplayPipe::validateTransaction(IOAccelDisplayPipeTransaction2 *)
 static bool nvAccelIopAsyncBusy(const void *pipe);
 static int gIopBench;   // debug.nvaccel_iop_bench: 1 = time a read-only pass over the next copied frame's source
 static SInt64 gIopReadUs, gIopCopyUs, gIopCopyUsMax, gIopCopyUsSum;
-static int gIopSse = 1;   // debug.nvaccel_iop_sse
+static int gIopSse = 0;   // debug.nvaccel_iop_sse
 
 // One row of a copied frame in 64-byte steps: SSE4.1 streaming loads (movntdqa) and non-temporal stores (movntdq).
 // Some of WindowServer's display surfaces are write-combined, and plain loads read those at ~0.5 GB/s: a frame from
 // one took 13-30 ms against 1-2 ms, and the desktop stuttered (2026-10-20); movntdqa reads them a cache line at a time.
-// The XMM registers of a kernel thread are not kept across a preemption, so interrupts stay off for the row (~10 KB).
+// Interrupts stay on: the surface's kernel mapping fills in on first touch, and a page fault with interrupts off
+// panicked (performTransaction+0xe5b, 2026-10-20). x86 XNU switches the FPU lazily: this thread's first SSE
+// instruction traps (#NM), gets the thread an FPU save area, and its XMM registers survive preemption from then on.
 // bytes: a non-zero multiple of 64; src and dst 16-byte aligned. l10r narrows ARGB2101010 to XRGB8888 on the way.
 static void nvIopRowSSE(const void *src, void *dst, unsigned long bytes, bool l10r)
 {
@@ -977,7 +978,6 @@ static void nvIopRowSSE(const void *src, void *dst, unsigned long bytes, bool l1
         0x00ff0000u, 0x00ff0000u, 0x00ff0000u, 0x00ff0000u, 0x0000ff00u, 0x0000ff00u, 0x0000ff00u, 0x0000ff00u,
         0x000000ffu, 0x000000ffu, 0x000000ffu, 0x000000ffu, 0xff000000u, 0xff000000u, 0xff000000u, 0xff000000u,
     };
-    const int intr = ml_set_interrupts_enabled(0);
     if (l10r) {
 #define NV_L10R_LANE(r) \
         "movdqa %%" r ", %%xmm8\n\t" "movdqa %%" r ", %%xmm9\n\t" \
@@ -1005,7 +1005,6 @@ static void nvIopRowSSE(const void *src, void *dst, unsigned long bytes, bool l1
             :
             : "memory", "cc");
     }
-    ml_set_interrupts_enabled(intr);
 }
 bool NVDisplayPipe::isTransactionComplete(IOAccelDisplayPipeTransaction2 *)
 {
@@ -1238,7 +1237,7 @@ NVACCEL_CNT(nvaccel_iop_blank,        gCntIopBlank,       "K6: frames copied who
 static SInt64 gCntIopCopySkip;
 NVACCEL_CNT(nvaccel_iop_copy_skip,    gCntIopCopySkip,    "frames kept on the panel because the surface's newest pixels were not yet in system memory");
 SYSCTL_INT(_debug, OID_AUTO, nvaccel_iop_bench, CTLFLAG_RW | CTLFLAG_LOCKED, &gIopBench, 0, "1 = time a read-only pass over the next copied frame's source (nvaccel_iop_read_us)");
-SYSCTL_INT(_debug, OID_AUTO, nvaccel_iop_sse, CTLFLAG_RW | CTLFLAG_LOCKED, &gIopSse, 0, "1 = copy frames with SSE4.1 streaming loads (fast from write-combined surfaces), 0 = 8-byte loads");
+SYSCTL_INT(_debug, OID_AUTO, nvaccel_iop_sse, CTLFLAG_RW | CTLFLAG_LOCKED, &gIopSse, 0, "1 = copy frames with SSE4.1 streaming loads (fast from write-combined surfaces), 0 = 8-byte loads (default until proven)");
 NVACCEL_CNT(nvaccel_iop_read_us,      gIopReadUs,         "the last bench: microseconds to read one frame's source");
 NVACCEL_CNT(nvaccel_iop_copy_us,      gIopCopyUs,         "microseconds the last copied frame took");
 NVACCEL_CNT(nvaccel_iop_copy_us_max,  gIopCopyUsMax,      "the slowest copied frame, microseconds");
