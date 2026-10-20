@@ -23,6 +23,17 @@
 	</dict>
 	<key>IOKitPersonalities</key>
 	<dict>
+		<key>PhxFB</key>
+		<dict>
+			<key>CFBundleIdentifier</key><string>com.luuumi.PhxAccel</string>
+			<key>IOClass</key><string>PhxFB</string>
+			<key>IOProviderClass</key><string>IOPCIDevice</string>
+			<!-- the 780M panel over the firmware (GOP) mode. Test stage: only after the claim, in its own match category
+			     (beside the boot framebuffer); the boot-time takeover (category IOFramebuffer, score above IONDRV) comes later -->
+			<key>IOPCIPrimaryMatch</key><string>0x19001002</string>
+			<key>IOPropertyMatch</key><dict><key>nmxgpu-claimed</key><true/></dict>
+			<key>IOMatchCategory</key><string>PhxFB</string>
+		</dict>
 		<key>PhxAccel</key>
 		<dict>
 			<key>CFBundleIdentifier</key><string>com.luuumi.PhxAccel</string>

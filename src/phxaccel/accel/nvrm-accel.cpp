@@ -633,6 +633,12 @@ public:
             ALOG("multi-head: up to %u heads, registration lock %p%s", kNvMaxFB, fRegLock,
                  fRegLock ? "" : " -- NULL: two sysctl writers could interleave a registration");
 #ifdef NMX_ACCEL
+#ifdef PHX_FB
+            // PhxAccel: the 780M drives its own panel (PhxFB): WindowServer composites on this accelerator once
+            // debug.nvaccelfb registers the panel and WindowServer restarts
+            OSDictionary *fbm = serviceMatching("PhxFB");
+            ALOG("AMD accelerator up: watching for PhxFB (the 780M panel) -> WindowServer composites here");
+#else
             // AMD/Intel: the Metal device is for apps; WindowServer draws into NMXGPU's framebuffer, and the plugin copies
             // finished frames into the IOSurfaces it reads (the headless path NVIDIA laptops use)
             nvaccelInstallSysctl();
@@ -640,6 +646,7 @@ public:
             setProperty("NMXAccelHeadless", kOSBooleanTrue);
             ALOG("AMD/Intel accelerator up: Metal device for apps, frames copied to the framebuffer WindowServer draws");
             OSDictionary *fbm = nullptr;
+#endif
 #else
             OSDictionary *fbm = serviceMatching("NVRMNVDAFramebuffer");
 #endif
@@ -1252,13 +1259,18 @@ static bool gSysctlInstalled = false;
 static void nvaccelInstallSysctl(void)
 {
     if (gSysctlInstalled) return;
-#ifdef NMX_ACCEL
+#if defined(NMX_ACCEL) && !defined(PHX_FB)
     // only this one: the NVIDIA accelerator may be loaded too, and owns the debug.nvaccel* names
     sysctl_register_oid(&sysctl__debug_nmxaccel_headless);
     gSysctlInstalled = true;
 #else
-    sysctl_register_oid(&sysctl__debug_nvaccelfb);
+    // PhxAccel (PHX_FB) is the only accelerator on the Firebat: it takes every debug.nvaccel* control
+#ifdef NMX_ACCEL
+    sysctl_register_oid(&sysctl__debug_nmxaccel_headless);
+#else
     sysctl_register_oid(&sysctl__debug_nvaccel_headless);
+#endif
+    sysctl_register_oid(&sysctl__debug_nvaccelfb);
     sysctl_register_oid(&sysctl__debug_nvaccel_vm_alloc);       sysctl_register_oid(&sysctl__debug_nvaccel_vm_alloc_bytes);
     sysctl_register_oid(&sysctl__debug_nvaccel_vm_dealloc);     sysctl_register_oid(&sysctl__debug_nvaccel_vm_dealloc_bytes);
     sysctl_register_oid(&sysctl__debug_nvaccel_vm_refused);
