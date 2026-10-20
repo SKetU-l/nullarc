@@ -969,8 +969,11 @@ static int gIopSse = 0;   // debug.nvaccel_iop_sse
 // Some of WindowServer's display surfaces are write-combined, and plain loads read those at ~0.5 GB/s: a frame from
 // one took 13-30 ms against 1-2 ms, and the desktop stuttered (2026-10-20); movntdqa reads them a cache line at a time.
 // Interrupts stay on: the surface's kernel mapping fills in on first touch, and a page fault with interrupts off
-// panicked (performTransaction+0xe5b, 2026-10-20). x86 XNU switches the FPU lazily: this thread's first SSE
-// instruction traps (#NM), gets the thread an FPU save area, and its XMM registers survive preemption from then on.
+// panicked (performTransaction+0xe5b, 2026-10-20). x86 XNU switches the FPU lazily: the first SSE instruction traps
+// (#NM) and loads the current thread's FPU state, which is saved across preemption from then on. That thread may be a
+// user thread in a system call (WindowServer's), whose XMM registers the kernel does not save on entry, so the ten
+// used here are saved first and put back after (WindowServer hung four times in a row while the first version, without
+// this, was on; not proven to be the cause).
 // bytes: a non-zero multiple of 64; src and dst 16-byte aligned. l10r narrows ARGB2101010 to XRGB8888 on the way.
 static void nvIopRowSSE(const void *src, void *dst, unsigned long bytes, bool l10r)
 {
@@ -978,6 +981,12 @@ static void nvIopRowSSE(const void *src, void *dst, unsigned long bytes, bool l1
         0x00ff0000u, 0x00ff0000u, 0x00ff0000u, 0x00ff0000u, 0x0000ff00u, 0x0000ff00u, 0x0000ff00u, 0x0000ff00u,
         0x000000ffu, 0x000000ffu, 0x000000ffu, 0x000000ffu, 0xff000000u, 0xff000000u, 0xff000000u, 0xff000000u,
     };
+    uint8_t save[160] __attribute__((aligned(16)));
+    __asm__ __volatile__(
+        "movdqa %%xmm0, 0(%0)\n\t" "movdqa %%xmm1, 16(%0)\n\t" "movdqa %%xmm2, 32(%0)\n\t" "movdqa %%xmm3, 48(%0)\n\t"
+        "movdqa %%xmm4, 64(%0)\n\t" "movdqa %%xmm5, 80(%0)\n\t" "movdqa %%xmm6, 96(%0)\n\t" "movdqa %%xmm7, 112(%0)\n\t"
+        "movdqa %%xmm8, 128(%0)\n\t" "movdqa %%xmm9, 144(%0)\n\t"
+        : : "r"(save) : "memory");
     if (l10r) {
 #define NV_L10R_LANE(r) \
         "movdqa %%" r ", %%xmm8\n\t" "movdqa %%" r ", %%xmm9\n\t" \
@@ -1005,6 +1014,11 @@ static void nvIopRowSSE(const void *src, void *dst, unsigned long bytes, bool l1
             :
             : "memory", "cc");
     }
+    __asm__ __volatile__(
+        "movdqa 0(%0), %%xmm0\n\t" "movdqa 16(%0), %%xmm1\n\t" "movdqa 32(%0), %%xmm2\n\t" "movdqa 48(%0), %%xmm3\n\t"
+        "movdqa 64(%0), %%xmm4\n\t" "movdqa 80(%0), %%xmm5\n\t" "movdqa 96(%0), %%xmm6\n\t" "movdqa 112(%0), %%xmm7\n\t"
+        "movdqa 128(%0), %%xmm8\n\t" "movdqa 144(%0), %%xmm9\n\t"
+        : : "r"(save) : "memory");
 }
 bool NVDisplayPipe::isTransactionComplete(IOAccelDisplayPipeTransaction2 *)
 {

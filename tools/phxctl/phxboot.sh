@@ -13,6 +13,8 @@ exec >>"$LOG" 2>&1
 echo "== $(date '+%F %T') phxboot"
 release() { sysctl -w debug.phxfb_hold=0 >/dev/null 2>&1; }
 apps_only() { printf '# phxboot: Metal for the built-in test tools only\n' > $ALLOW; }
+# every process gets the Metal device; WindowServer too once the accelerator is armed (NullMoth's own default list)
+all_apps() { { printf '# phxboot: Metal for every app%s\n*\n' "$1"; [ -z "$2" ] || printf '%s\n' "$2"; } > $ALLOW; }
 # PhxAMDFB without the arming leaves the panel black: give up on M2 (until $G/phxboot-m2 is put back) and reboot into
 # the firmware framebuffer
 m2_fail() {
@@ -51,7 +53,7 @@ if [ $M2 = 1 ]; then
     sysctl -w debug.nvaccelfb=1 >/dev/null; sleep 1
     sysctl -w debug.nvaccel_iop=1 >/dev/null; sysctl -w debug.nvaccelfb=3 >/dev/null; sleep 1
     sysctl -w debug.phxagdc=1 >/dev/null; sleep 1
-    printf '# phxboot: WindowServer composites on the 780M (armed only)\n!WindowServer\n' > $ALLOW
+    all_apps "; WindowServer composites on the 780M (armed only)" '!WindowServer'
     # WindowServer's process starts early but opens the panel only once GPUWrangler publishes the GPU, which the busy
     # hold delays. A panel opened before the arming (the hold timed out) stays black, and a restarted WindowServer then
     # asserts in CoreDisplay_CreateDisplayForCGXDisplayDevice and hangs: no way back but a reboot.
@@ -69,6 +71,7 @@ if [ $M2 = 1 ]; then
     echo "WindowServer pid $(pgrep -x WindowServer), frames on the panel $(sysctl -n debug.nvaccel_iop_ok)"
 else
     release
+    all_apps " (WindowServer stays on the firmware framebuffer)" ""
 fi
 [ -e $G/phxboot-m2 ] && nvram phxfb-boot=1 && echo "PhxAMDFB armed for the next boot"
 rm -f "$MARK"; sync

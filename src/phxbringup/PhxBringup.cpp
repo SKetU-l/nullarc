@@ -22,12 +22,13 @@
 
 #include "PhxNativeABI.h"
 
-#define PHX_KEXT_BUILD 28u
+#define PHX_KEXT_BUILD 29u
 
 // debug.phxbos_flush: how a client's BOs are made coherent around each submission and each completed wait.
 // 2 = clflush every line (the bring-up way), 1 = clflushopt (the same lines, pipelined), 0 = none (the GPU maps system
-// memory snooped, kPteSysFlags). With clflush, WindowServer spent ~73% of its CPU here and composited ~13 fps (2026-10-20).
-static int gBosFlush = 1;
+// memory snooped, kPteSysFlags). With clflush, WindowServer spent ~73% of its CPU here and composited ~13 fps; with
+// none, 41 fps and no artifacts (2026-10-20), hence the default.
+static int gBosFlush = 0;
 static volatile SInt64 gBosFlushBytes;
 SYSCTL_INT(_debug, OID_AUTO, phxbos_flush, CTLFLAG_RW | CTLFLAG_LOCKED, &gBosFlush, 0,
            "BO cache maintenance per submit/wait: 0 none, 1 clflushopt, 2 clflush");
@@ -149,13 +150,26 @@ private:
     uint64_t gSeq{0};
     uint64_t queueFence(const GpuQueue &q) const;
     IOLock *gpuLock{nullptr};
+    // One GPUVM context (page tables) per client, and the eight hardware VMIDs lent to contexts at submission time,
+    // as amdgpu does: a fixed VMID per client capped Metal at eight processes, and with every app allowed Metal the
+    // ninth got no device (2026-10-20). A context's handle is its index + 1.
     struct VmCtx {
         IOBufferMemoryDescriptor *pool;   // physically contiguous system memory, page 0 = root
         uint64_t phys;
         uint32_t pages, used;
         bool busy;
+        uint32_t hw;                      // the hardware VMID pointed at these tables, 0 = none
     };
-    VmCtx vm[8]{};
+    static constexpr uint32_t kMaxCtx = 96;
+    VmCtx vm[kMaxCtx]{};
+    struct HwVmid {
+        uint32_t ctx;                     // handle of the context it points at, 0 = free
+        uint64_t lastSeq, lastUse;        // its newest submission; when it was last bound or used
+    };
+    HwVmid hwv[8]{};
+    uint64_t hwTick{0};
+    uint32_t vmBind(uint32_t handle);
+    VmCtx *vmCtx(uint32_t handle) { return handle && handle <= kMaxCtx && vm[handle - 1].busy ? &vm[handle - 1] : nullptr; }
     uint64_t *ptTable(const VmCtx &c, uint64_t phys) const;
     uint64_t *vmPte(VmCtx &c, uint64_t va, bool alloc);
     void vmFlushTlb(uint32_t vmid) const;
@@ -310,6 +324,8 @@ void PhxBringup::stop(IOService *provider) {
             c.pool->release();
         c = VmCtx{};
     }
+    for (HwVmid &h : hwv)
+        h = HwVmid{};
     if (gpuLock) {
         IOLockFree(gpuLock);
         gpuLock = nullptr;
@@ -452,7 +468,7 @@ IOReturn PhxBringup::sysMem(uint64_t op, uint64_t a, uint64_t b, uint64_t *out0,
 // Everything here reproduces what tools/phxctl/mesboot.c proved on the 780M: VMID 8 with a 4-level table in
 // system memory (PDE = next|VALID|SYSTEM|SNOOPED, no BFS/TF since gmc_v11 has translate_further off), system-page
 // PTEs with MTYPE 4, invalidation on engine 17, and an ACQUIRE/RELEASE_MEM GL2 writeback after each IB.
-static constexpr uint32_t kFirstUserVmid = 8, kNumUserVmids = 8;   // VMIDs 8..15, one per client
+static constexpr uint32_t kFirstUserVmid = 8, kNumUserVmids = 8;   // VMIDs 8..15, lent to client contexts (vmBind)
 static constexpr uint64_t kPteSysFlags = 0x77ull | (4ull << 48);  // VALID SYSTEM SNOOPED EXEC READ WRITE, MTYPE 4
 static constexpr uint64_t kPtAddrMask = 0x0000FFFFFFFFF000ull;
 static constexpr uint32_t kPtPoolBytes = 4u << 20;                // page tables of one context (1024 pages)
@@ -492,12 +508,13 @@ void PhxBringup::vmFlushTlb(uint32_t vmid) const {
         IODelay(1);
 }
 
-// Takes a free context: empty tables (root only), registers pointed at them. 0 when all eight are in use.
+// Takes a free context: empty tables (root only), no hardware VMID until its first submission. Returns its handle,
+// 0 when all kMaxCtx are in use.
 uint32_t PhxBringup::vmidAlloc() {
     if (!gpuReady())
         return 0;
     IOLockLock(gpuLock);
-    for (uint32_t i = 0; i < kNumUserVmids; i++) {
+    for (uint32_t i = 0; i < kMaxCtx; i++) {
         VmCtx &c = vm[i];
         if (c.busy)
             continue;
@@ -515,38 +532,82 @@ uint32_t PhxBringup::vmidAlloc() {
         }
         c.used = 1;
         c.busy = true;
-        const uint32_t vmid = kFirstUserVmid + i;
-        wreg(kRegCtx0BaseLo + 2 * vmid, static_cast<uint32_t>(c.phys | 3));
-        wreg(kRegCtx0BaseLo + 2 * vmid + 1, static_cast<uint32_t>(c.phys >> 32));
-        wreg(kRegCtx0Cntl + vmid, 0x01fffe07);
-        wreg(kRegCtx0StartLo + 2 * vmid, 0);
-        wreg(kRegCtx0StartLo + 2 * vmid + 1, 0);
-        wreg(kRegCtx0EndLo + 2 * vmid, 0xffffffff);
-        wreg(kRegCtx0EndLo + 2 * vmid + 1, 0xf);
-        vmFlushTlb(vmid);
+        c.hw = 0;
         IOLockUnlock(gpuLock);
-        return vmid;
+        return i + 1;
     }
     IOLockUnlock(gpuLock);
     return 0;
 }
 
+// Points a hardware VMID at the context's tables for a submission (gpuLock held): the one it already has, a free one,
+// or the least recently used one whose submissions the GPU has all finished (waits for one, bounded ~2 s). 0 on timeout.
+uint32_t PhxBringup::vmBind(uint32_t handle) {
+    VmCtx &c = vm[handle - 1];
+    const uint64_t now = ++hwTick;
+    if (c.hw) {
+        hwv[c.hw - kFirstUserVmid].lastUse = now;
+        return c.hw;
+    }
+    int pick = -1;
+    for (int spin = 0; pick < 0; spin++) {
+        const uint64_t done = gpuRetired();
+        uint64_t oldest = ~0ull;
+        for (uint32_t i = 0; i < kNumUserVmids; i++) {
+            if (!hwv[i].ctx) {
+                pick = static_cast<int>(i);
+                break;
+            }
+            if (hwv[i].lastSeq <= done && hwv[i].lastUse < oldest) {
+                oldest = hwv[i].lastUse;
+                pick = static_cast<int>(i);
+            }
+        }
+        if (pick >= 0)
+            break;
+        if (spin > 40000)
+            return 0;
+        IODelay(50);
+    }
+    HwVmid &h = hwv[pick];
+    if (h.ctx)
+        vm[h.ctx - 1].hw = 0;
+    h.ctx = handle;
+    h.lastSeq = 0;
+    h.lastUse = now;
+    const uint32_t vmid = kFirstUserVmid + static_cast<uint32_t>(pick);
+    c.hw = vmid;
+    wreg(kRegCtx0BaseLo + 2 * vmid, static_cast<uint32_t>(c.phys | 3));
+    wreg(kRegCtx0BaseLo + 2 * vmid + 1, static_cast<uint32_t>(c.phys >> 32));
+    wreg(kRegCtx0Cntl + vmid, 0x01fffe07);
+    wreg(kRegCtx0StartLo + 2 * vmid, 0);
+    wreg(kRegCtx0StartLo + 2 * vmid + 1, 0);
+    wreg(kRegCtx0EndLo + 2 * vmid, 0xffffffff);
+    wreg(kRegCtx0EndLo + 2 * vmid + 1, 0xf);
+    vmFlushTlb(vmid);
+    return vmid;
+}
+
 // Returns a context once the GPU is past the client's last submission (bounded wait): the tables used so far are
-// cleared, so nothing the client mapped stays reachable.
-void PhxBringup::vmidFree(uint32_t vmid, uint64_t lastSeq) {
-    if (vmid < kFirstUserVmid || vmid >= kFirstUserVmid + kNumUserVmids)
+// cleared, so nothing the client mapped stays reachable, and its hardware VMID (if any) is freed.
+void PhxBringup::vmidFree(uint32_t handle, uint64_t lastSeq) {
+    if (!vmCtx(handle))
         return;
     for (int i = 0; i < 2000 && gpuRetired() < lastSeq; i++)
         IOSleep(1);
     IOLockLock(gpuLock);
-    VmCtx &c = vm[vmid - kFirstUserVmid];
+    VmCtx &c = vm[handle - 1];
     if (c.pool) {
         uint8_t *p = static_cast<uint8_t *>(c.pool->getBytesNoCopy());
         bzero(p, static_cast<size_t>(c.used) * 4096);
         for (uint32_t o = 0; o < c.used * 4096u; o += 64)
             flushLine(p + o);
     }
-    vmFlushTlb(vmid);
+    if (c.hw) {
+        vmFlushTlb(c.hw);
+        hwv[c.hw - kFirstUserVmid].ctx = 0;
+        c.hw = 0;
+    }
     c.used = 1;
     c.busy = false;
     IOLockUnlock(gpuLock);
@@ -594,10 +655,10 @@ IOReturn PhxBringup::claimAccel() {
     return kIOReturnSuccess;
 }
 
-IOReturn PhxBringup::vmMap(uint32_t vmid, uint64_t va, IOMemoryDescriptor *md, uint64_t off, uint64_t size) {
-    if (vmid < kFirstUserVmid || vmid >= kFirstUserVmid + kNumUserVmids || !vm[vmid - kFirstUserVmid].busy)
+IOReturn PhxBringup::vmMap(uint32_t handle, uint64_t va, IOMemoryDescriptor *md, uint64_t off, uint64_t size) {
+    if (!vmCtx(handle))
         return kIOReturnNotReady;
-    VmCtx &c = vm[vmid - kFirstUserVmid];
+    VmCtx &c = vm[handle - 1];
     IOReturn r = kIOReturnSuccess;
     IOLockLock(gpuLock);
     for (uint64_t p = 0; p < size; p += 4096) {
@@ -611,15 +672,16 @@ IOReturn PhxBringup::vmMap(uint32_t vmid, uint64_t va, IOMemoryDescriptor *md, u
         *pte = (pa & kPtAddrMask) | kPteSysFlags;
         flushLine(pte);
     }
-    vmFlushTlb(vmid);
+    if (c.hw)   // an unbound context is flushed when it is next bound
+        vmFlushTlb(c.hw);
     IOLockUnlock(gpuLock);
     return r;
 }
 
-IOReturn PhxBringup::vmUnmap(uint32_t vmid, uint64_t va, uint64_t size) {
-    if (vmid < kFirstUserVmid || vmid >= kFirstUserVmid + kNumUserVmids || !vm[vmid - kFirstUserVmid].busy)
+IOReturn PhxBringup::vmUnmap(uint32_t handle, uint64_t va, uint64_t size) {
+    if (!vmCtx(handle))
         return kIOReturnNotReady;
-    VmCtx &c = vm[vmid - kFirstUserVmid];
+    VmCtx &c = vm[handle - 1];
     IOLockLock(gpuLock);
     for (uint64_t p = 0; p < size; p += 4096) {
         uint64_t *pte = vmPte(c, va + p, false);
@@ -628,7 +690,8 @@ IOReturn PhxBringup::vmUnmap(uint32_t vmid, uint64_t va, uint64_t size) {
             flushLine(pte);
         }
     }
-    vmFlushTlb(vmid);
+    if (c.hw)
+        vmFlushTlb(c.hw);
     IOLockUnlock(gpuLock);
     return kIOReturnSuccess;
 }
@@ -663,10 +726,10 @@ uint64_t PhxBringup::gpuRetired() const {
     return r;
 }
 
-IOReturn PhxBringup::gpuSubmit(uint32_t vmid, bool gfx, const uint64_t *ibVa, const uint32_t *ibDw, uint32_t n, uint64_t *seqOut) {
+IOReturn PhxBringup::gpuSubmit(uint32_t handle, bool gfx, const uint64_t *ibVa, const uint32_t *ibDw, uint32_t n, uint64_t *seqOut) {
     // graphics IBs go to the gfx queue and compute IBs to the compute queue; with one of them missing, the other runs both
     GpuQueue *qp = gfx ? (gq[1].ready ? &gq[1] : &gq[0]) : (gq[0].ready ? &gq[0] : &gq[1]);
-    if (!qp->ready || vmid < kFirstUserVmid || vmid >= kFirstUserVmid + kNumUserVmids)
+    if (!qp->ready || !vmCtx(handle))
         return kIOReturnNotReady;
     GpuQueue &q = *qp;
     const uint32_t need = n * 4 + 8;
@@ -688,6 +751,11 @@ IOReturn PhxBringup::gpuSubmit(uint32_t vmid, bool gfx, const uint64_t *ibVa, co
         }
         IODelay(50);
     }
+    const uint32_t vmid = vmBind(handle);
+    if (!vmid) {
+        IOLockUnlock(gpuLock);
+        return kIOReturnBusy;
+    }
     uint32_t k = 0;
     for (uint32_t i = 0; i < n; i++) {
         ringPut(q, k++, 0xC0023F00);                               // INDIRECT_BUFFER
@@ -700,6 +768,7 @@ IOReturn PhxBringup::gpuSubmit(uint32_t vmid, bool gfx, const uint64_t *ibVa, co
         ringPut(q, k++, ibDw[i] | (q.gfx ? 0u : (1u << 23)) | (vmid << 24));
     }
     const uint64_t seq = ++gSeq;
+    hwv[vmid - kFirstUserVmid].lastSeq = seq;
     const uint64_t fenceMc = fbMcBase + q.fenceOff;
     ringPut(q, k++, 0xC0064900);                                   // RELEASE_MEM, as gfx_v11_0_ring_emit_fence
     ringPut(q, k++, 0x06603514);                                   // GCR SEQ|GL2_WB|GLM_INV|GLM_WB, CP 3, CACHE_FLUSH_AND_INV_TS, idx 5
