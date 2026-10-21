@@ -27,3 +27,7 @@ tests/fixtures/
 
 # Reference dumps and vendor assets if downloaded locally
 reference/
+
+# ACPI MSDM carries the Windows product key: never commit it
+MSDM.bin
+MSDM.dsl

@@ -33,7 +33,7 @@ for f in "${FILES[@]}"; do
   ok=0
   for base in "${MIRRORS[@]}"; do
     echo "[fixtures] fetching $f from $base"
-    if curl -fsSL --retry 3 -A "amd-rdna3-macos-driver-ci" -o "$DEST/$f.tmp" "$base/$f"; then
+    if curl -fsSL --retry 3 -A "nullarc-ci" -o "$DEST/$f.tmp" "$base/$f"; then
       # Reject HTML (bot challenge / error pages) masquerading as firmware.
       if head -c 512 "$DEST/$f.tmp" | grep -qiE '<(!doctype|html)'; then
         echo "[fixtures]   got an HTML page instead of firmware, trying next mirror" >&2

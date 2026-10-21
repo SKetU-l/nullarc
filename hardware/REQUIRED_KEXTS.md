@@ -22,9 +22,9 @@ This document lists the required and recommended third-party OpenCore kernel ext
 
 | Kext / Bundle | Purpose | Source / Download |
 | :--- | :--- | :--- |
-| **PhxBringup.kext** | OpenCore EFI kext (in `EFI/OC/Kexts/`). Initializes AMD Phoenix/Hawk Point silicon, PSP 13.0.4 firmware, MES v11 scheduler, and GPUVM 4-level page tables. | [Releases](https://github.com/luuumi-dev/amd-rdna3-macos-driver/releases) or build via `make` |
-| **PhxAccel.kext** | Auxiliary Kernel Collection (`/Library/Extensions/`). Provides `PhxAMDFB` native framebuffer and `PhxAGDC` display control. | [Releases](https://github.com/luuumi-dev/amd-rdna3-macos-driver/releases) |
-| **NVMTLDriver.bundle** | Metal-over-Vulkan translation runtime + Mesa RADV (`/Library/GPUBundles/`). | [Releases](https://github.com/luuumi-dev/amd-rdna3-macos-driver/releases) |
+| **PhxBringup.kext** | OpenCore EFI kext (in `EFI/OC/Kexts/`). Initializes AMD Phoenix/Hawk Point silicon, PSP 13.0.4 firmware, MES v11 scheduler, and GPUVM 4-level page tables. | [Releases](https://github.com/luuumi-dev/nullarc/releases) or build via `make` |
+| **PhxAccel.kext** | Auxiliary Kernel Collection (`/Library/Extensions/`). Provides `PhxAMDFB` native framebuffer and `PhxAGDC` display control. | [Releases](https://github.com/luuumi-dev/nullarc/releases) |
+| **NVMTLDriver.bundle** | Metal-over-Vulkan translation runtime + Mesa RADV (`/Library/GPUBundles/`). | [Releases](https://github.com/luuumi-dev/nullarc/releases) |
 
 ---
 

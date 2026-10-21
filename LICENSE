@@ -12,9 +12,9 @@ Copyright (c) 2026 luuumi-dev and contributors.
 
 ---
 
-## 2. Accelerator & Display Controller (`PhxAccel` / `src/phxaccel`)
+## 2. Accelerator, Display Controller and Metal plugin (`src/phxaccel`, `src/nmplugin`)
 
-The `PhxAccel` kernel extension, framebuffer interface (`PhxAMDFB`), display timing controller (`PhxAGDC`), and `NVMTLDriver` window server patches are derived from NullMoth's driver architecture and are licensed under the **PolyForm Noncommercial License 1.0.0**.
+The `PhxAccel` kernel extension, framebuffer interface (`PhxAMDFB`), display timing controller (`PhxAGDC`), and the `NVMTLDriver` Metal plugin (`src/nmplugin`, `tools/nvmtl-patches`) are derived from NullMoth's driver architecture and are licensed under the **PolyForm Noncommercial License 1.0.0**.
 
 **Required Notice:**
 ```

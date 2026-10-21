@@ -3,10 +3,10 @@
 S=${1:-12}; L=${2:-run}
 U=$(stat -f %u /dev/console); N=$(stat -f %Su /dev/console)
 [ "$N" = root ] && { echo "$L: nobody logged in"; exit 1; }
-(echo 2810 | sudo -S -p "" launchctl asuser $U sudo -u $N /Users/dripside/gpu/anim/anim $((S + 5)) >/tmp/anim.log 2>&1 &)
+(sudo launchctl asuser $U sudo -u $N /Users/dripside/gpu/anim/anim $((S + 5)) >/tmp/anim.log 2>&1 &)
 sleep 3
 a=$(sysctl -n debug.nvaccel_iop_ok); s=$(sysctl -n debug.nvaccel_iop_copy_us_sum); t0=$(ps -o time= -p $(pgrep -x WindowServer))
-echo 2810 | sudo -S -p "" sysctl -w debug.nvaccel_iop_copy_us_max=0 >/dev/null 2>&1
+sudo sysctl -w debug.nvaccel_iop_copy_us_max=0 >/dev/null 2>&1
 sleep $S
 b=$(sysctl -n debug.nvaccel_iop_ok); e=$(sysctl -n debug.nvaccel_iop_copy_us_sum); t1=$(ps -o time= -p $(pgrep -x WindowServer))
 n=$((b - a)); [ $n -gt 0 ] || n=1
