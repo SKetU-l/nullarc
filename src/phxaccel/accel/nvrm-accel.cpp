@@ -179,6 +179,33 @@ class IOAccelNVRMCarrier : public IOService {
 };
 OSDefineMetaClassAndStructors(IOAccelNVRMCarrier, IOService)
 
+#ifdef NMX_ACCEL
+// RADV's native (N48N) client through the accelerator. WebKit's GPU process may only open IOAccelerator connections
+// (com.apple.WebKit.GPUProcess.sb: iokit-connection "IOAccelerator"), so there RADV could not reach PhxBringup and
+// WebGL/WebGPU had no Metal device. The proxy holds a PhxBringup client made for the same task and hands it every call,
+// taking BO_CREATE (3) and BO_IMPORT_HOST (21) also as 15 and 16, numbers the sandbox's message filter passes.
+class IOAccelNMXNativeProxy : public IOUserClient {
+    OSDeclareDefaultStructors(IOAccelNMXNativeProxy)
+public:
+    IOUserClient *fInner = nullptr;
+    IOReturn externalMethod(uint32_t sel, IOExternalMethodArguments *a, IOExternalMethodDispatch *, OSObject *, void *) APPLE_KEXT_OVERRIDE {
+        IOUserClient *in = fInner;
+        if (!in) return kIOReturnNotAttached;
+        return in->externalMethod(sel == 15 ? 3 : sel == 16 ? 21 : sel, a, nullptr, nullptr, nullptr);
+    }
+    IOReturn clientMemoryForType(UInt32 type, IOOptionBits *options, IOMemoryDescriptor **memory) APPLE_KEXT_OVERRIDE {
+        return fInner ? fInner->clientMemoryForType(type, options, memory) : kIOReturnNotAttached;
+    }
+    void dropInner() {
+        IOUserClient *in = (IOUserClient *)__atomic_exchange_n((void **)&fInner, nullptr, __ATOMIC_ACQ_REL);
+        if (in) { in->clientClose(); in->release(); }
+    }
+    IOReturn clientClose() APPLE_KEXT_OVERRIDE { dropInner(); terminate(); return kIOReturnSuccess; }
+    void free() APPLE_KEXT_OVERRIDE { dropInner(); IOUserClient::free(); }
+};
+OSDefineMetaClassAndStructors(IOAccelNMXNativeProxy, IOUserClient)
+#endif
+
 class NVAccel : public IOGraphicsAccelerator2 {
     OSDeclareDefaultStructors(NVAccel)
     NM_TAHOE_FWD(NVAccel)
@@ -480,8 +507,40 @@ public:
         return nullptr;
     }
     IOService *fNVRM = nullptr;
+#ifdef NMX_ACCEL
+    IOService *fNative = nullptr;
+    IOReturn newNativeProxy(task_t owningTask, void *securityID, UInt32 type, IOUserClient **handler) {
+        if (!fNative) {
+            OSDictionary *m = serviceMatching("PhxBringup");
+            if (m) fNative = waitForMatchingService(m, 100ULL * 1000 * 1000);   // retained, like fNVRM
+        }
+        if (!fNative) return kIOReturnNotAttached;
+        IOService *carrier = nullptr;
+        for (unsigned i = 0; i < NV_CARRIERS && !carrier; i++) carrier = fCarriers[(fCarrierNext + i) % NV_CARRIERS];
+        fCarrierNext++;
+        if (!carrier) return kIOReturnNoResources;
+        IOUserClient *inner = nullptr;
+        IOReturn r = fNative->newUserClient(owningTask, securityID, type, &inner);
+        if (r != kIOReturnSuccess || !inner) return r ? r : kIOReturnNoResources;
+        IOAccelNMXNativeProxy *p = OSTypeAlloc(IOAccelNMXNativeProxy);
+        if (!p || !p->initWithTask(owningTask, securityID, type) || !p->attach(carrier)) {
+            if (p) p->release();
+            inner->clientClose(); inner->release();
+            return kIOReturnNoMemory;
+        }
+        p->fInner = inner;
+        if (!p->start(carrier)) { p->detach(carrier); p->release(); return kIOReturnInternalError; }
+        static SInt32 logged;
+        if (OSIncrementAtomic(&logged) < 8) ALOG("newUserClient('N48N'): RADV's native client through the accelerator (proxy %p)", p);
+        *handler = p;
+        return kIOReturnSuccess;
+    }
+#endif
     IOReturn newUserClient(task_t owningTask, void *securityID, UInt32 type,
                            IOUserClient **handler) APPLE_KEXT_OVERRIDE {
+#ifdef NMX_ACCEL
+        if (type == 0x4E34384Eu) return newNativeProxy(owningTask, securityID, type, handler);   // 'N48N'
+#endif
         if ((type & 0xFFFF0000u) != 0x4E560000u) {
             IOReturn fr = IOGraphicsAccelerator2::newUserClient(owningTask, securityID, type, handler);
             if (fUcLogged < 40) { fUcLogged++;
