@@ -56,6 +56,12 @@ int main(int argc, char **argv)
         v.state = NSVisualEffectStateActive; v.wantsLayer = YES; v.layer.cornerRadius = 40; v.layer.masksToBounds = YES;
         [s addSubview:v];
         if (active) { [w makeKeyAndOrderFront:nil]; [NSApp activateIgnoringOtherApps:YES]; } else [w orderFrontRegardless];
+        if (getenv("GLASS_MOVE")) {   // the panels slide back and forth, so every frame redraws the glass
+            NSArray<NSView *> *panels = [s.subviews copy]; __block double t = 0;
+            [NSTimer scheduledTimerWithTimeInterval:1.0 / 120 repeats:YES block:^(NSTimer *tm) {
+                t += 1.0 / 120; const CGFloat dx = 30 * sin(t * 3);
+                for (NSUInteger i = 0; i < panels.count; i++) [panels[i] setFrameOrigin:NSMakePoint(40 + 410 * i + dx, 120)]; }];
+        }
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(secs * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [NSApp terminate:nil]; });
         [NSApp run];
     }
