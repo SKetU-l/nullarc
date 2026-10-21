@@ -53,20 +53,24 @@ OSDefineMetaClassAndStructors(PhxDeviceControl, AppleGraphicsDeviceControl)
 // CVT reduced-blanking timing for the panel's mode (PhxFB's IOFBConfig), in nvrm-agdc-k5.h's word layout.
 static void panelTiming(uint32_t t[NVK5_TIMING_WORDS])
 {
-    uint32_t w = 2560, h = 1600;
+    uint32_t w = 2560, h = 1600, mhz = 60000, ht = 0, vt = 0;
     if (gFB) {
-        OSObject *o = gFB->copyProperty("PhxFBWidth"), *p = gFB->copyProperty("PhxFBHeight");
-        if (OSNumber *n = OSDynamicCast(OSNumber, o)) w = n->unsigned32BitValue();
-        if (OSNumber *n = OSDynamicCast(OSNumber, p)) h = n->unsigned32BitValue();
-        OSSafeReleaseNULL(o); OSSafeReleaseNULL(p);
+        const char *keys[5] = { "PhxFBWidth", "PhxFBHeight", "PhxFBRefreshMilliHz", "PhxFBHTotal", "PhxFBVTotal" };
+        uint32_t *dst[5] = { &w, &h, &mhz, &ht, &vt };
+        for (int k = 0; k < 5; k++) {
+            OSObject *o = gFB->copyProperty(keys[k]);
+            if (OSNumber *n = OSDynamicCast(OSNumber, o)) *dst[k] = n->unsigned32BitValue();
+            OSSafeReleaseNULL(o);
+        }
     }
-    const uint32_t htot = w + 160, vtot = h + 46;   // CVT-RB: 48/32/80 horizontal, 3/6/37 vertical
+    // the totals and refresh PhxAMDFB read off the display engine; CVT-RB (48/32/80 horizontal, 3/6/37 vertical) otherwise
+    const uint32_t htot = ht > w ? ht : w + 160, vtot = vt > h ? vt : h + 46;
     bzero(t, NVK5_TIMING_WORDS * sizeof(uint32_t));
     t[NVK5_T_TAG] = NVK5_TIMING_TAG;
     t[NVK5_T_HVIS] = w; t[NVK5_T_HSS] = w + 48; t[NVK5_T_HSE] = w + 80; t[NVK5_T_HTOT] = htot;
     t[NVK5_T_VVIS] = h; t[NVK5_T_VSS] = h + 3; t[NVK5_T_VSE] = h + 9; t[NVK5_T_VTOT] = vtot;
-    t[NVK5_T_PCLK] = htot * vtot * 60;
-    t[NVK5_T_REFRESH_MHZ] = 60000; t[NVK5_T_HSYNCPOS] = 1; t[NVK5_T_VSYNCPOS] = 0;
+    t[NVK5_T_PCLK] = (uint32_t)((uint64_t)htot * vtot * mhz / 1000);
+    t[NVK5_T_REFRESH_MHZ] = mhz; t[NVK5_T_HSYNCPOS] = 1; t[NVK5_T_VSYNCPOS] = 0;
 }
 
 IOReturn PhxDeviceControl::vendor_doDeviceAttribute(unsigned int cmd, unsigned long *in, unsigned long inSize,

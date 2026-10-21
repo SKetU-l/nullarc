@@ -963,6 +963,11 @@ IOReturn NVDisplayPipe::validateTransaction(IOAccelDisplayPipeTransaction2 *)
 static bool nvAccelIopAsyncBusy(const void *pipe);
 static int gIopBench;   // debug.nvaccel_iop_bench: 1 = time a read-only pass over the next copied frame's source
 static SInt64 gIopReadUs, gIopCopyUs, gIopCopyUsMax, gIopCopyUsSum;
+// The present cadence against the panel's (PhxFB's VBL tick, phxfb.cpp): gaps between copied frames of about one
+// refresh, two, three, or more (idle), and the summed delay from the last tick to each present.
+extern uint64_t gPhxVblLastAbs, gPhxFrameAbs;
+static uint64_t gIopLastAbs;
+static SInt64 gCntIopGap[4], gIopPhaseUsSum;
 static int gIopSse = 0;   // debug.nvaccel_iop_sse
 
 // One row of a copied frame in 64-byte steps: SSE4.1 streaming loads (movntdqa) and non-temporal stores (movntdq).
@@ -1020,9 +1025,22 @@ static void nvIopRowSSE(const void *src, void *dst, unsigned long bytes, bool l1
         "movdqa 128(%0), %%xmm8\n\t" "movdqa 144(%0), %%xmm9\n\t"
         : : "r"(save) : "memory");
 }
+// A copied frame completes on the VBL tick after it was copied, as a flip latches at the next vblank. Completed at once,
+// WindowServer presented twice within one refresh whenever an app's update came between its own ticks, then skipped the
+// next: frames 3-4 ms apart followed by 12-16 ms gaps, 97 presents a second on a 120 Hz panel (2026-10-21). The
+// accelerator re-checks on each VBL interrupt while a transaction is pending; past two refreshes the frame completes
+// regardless (debug.nvaccel_iop_vsync, 0 = complete at once).
+extern volatile uint64_t gPhxVblSeq;
+static int gIopVsync = 0;   // phxboot turns it on once the panel is armed
+static SInt64 gCntIopVsyncWaits, gCntIopVsyncLate;
 bool NVDisplayPipe::isTransactionComplete(IOAccelDisplayPipeTransaction2 *)
 {
-    return gNvIop != 0 && !nvAccelIopAsyncBusy(this);
+    if (gNvIop == 0 || nvAccelIopAsyncBusy(this)) return false;
+    if (!gIopVsync || !gPhxFrameAbs || !fIopVblSeq) return true;
+    if (__atomic_load_n(&gPhxVblSeq, __ATOMIC_ACQUIRE) != fIopVblSeq) { fIopVblSeq = 0; return true; }
+    if (mach_absolute_time() - gIopLastAbs > 2 * gPhxFrameAbs) { OSAddAtomic64(1, &gCntIopVsyncLate); fIopVblSeq = 0; return true; }
+    OSAddAtomic64(1, &gCntIopVsyncWaits);
+    return false;
 }
 
 static void nvAccelSurfScanoutSync(IOSurface *s);
@@ -1115,6 +1133,16 @@ IOReturn NVDisplayPipe::performTransaction(IOAccelDisplayPipeTransaction2 *txn)
         ALOG("iop: bench: reading the %ux%u source took %llu us (sum 0x%x)", w, h, ns / 1000, sum);
     }
     const uint64_t t0 = mach_absolute_time();
+    if (gPhxFrameAbs) {
+        const uint64_t prev = gIopLastAbs, fr = gPhxFrameAbs;
+        gIopLastAbs = t0;
+        if (prev && t0 > prev) {
+            const uint64_t g = t0 - prev;
+            OSAddAtomic64(1, &gCntIopGap[g < fr * 3 / 2 ? 0 : g < fr * 5 / 2 ? 1 : g < fr * 7 / 2 ? 2 : 3]);
+        }
+        const uint64_t v = gPhxVblLastAbs;
+        if (v && t0 > v) { uint64_t ns; absolutetime_to_nanoseconds(t0 - v, &ns); OSAddAtomic64((SInt64)(ns / 1000), &gIopPhaseUsSum); }
+    }
     // 8 bytes (two pixels) per access when both sides allow it: half the uncached-side transactions of the dword loop.
     // Non-temporal stores (movnti, general registers only): the scan-out's system-RAM view (PhxFB) maps write-back
     // whatever cache mode it asks for, and plain stores left the frame in the CPU cache while the panel scanned the stale
@@ -1152,6 +1180,7 @@ IOReturn NVDisplayPipe::performTransaction(IOAccelDisplayPipeTransaction2 *txn)
         }
     }
     __asm__ __volatile__("sfence" ::: "memory");   // the frame is in DRAM before the transaction completes
+    fIopVblSeq = __atomic_load_n(&gPhxVblSeq, __ATOMIC_ACQUIRE);
     {
         uint64_t ns; absolutetime_to_nanoseconds(mach_absolute_time() - t0, &ns);
         const SInt64 us = (SInt64)(ns / 1000);
@@ -1256,6 +1285,14 @@ NVACCEL_CNT(nvaccel_iop_read_us,      gIopReadUs,         "the last bench: micro
 NVACCEL_CNT(nvaccel_iop_copy_us,      gIopCopyUs,         "microseconds the last copied frame took");
 NVACCEL_CNT(nvaccel_iop_copy_us_max,  gIopCopyUsMax,      "the slowest copied frame, microseconds");
 NVACCEL_CNT(nvaccel_iop_copy_us_sum,  gIopCopyUsSum,      "microseconds spent copying frames (over nvaccel_iop_src_surf + nvaccel_iop_src_res frames)");
+NVACCEL_CNT(nvaccel_iop_gap1,         gCntIopGap[0],      "copied frames about one panel refresh after the previous one");
+NVACCEL_CNT(nvaccel_iop_gap2,         gCntIopGap[1],      "copied frames about two refreshes after the previous one (one refresh skipped)");
+NVACCEL_CNT(nvaccel_iop_gap3,         gCntIopGap[2],      "copied frames about three refreshes after the previous one");
+NVACCEL_CNT(nvaccel_iop_gap4,         gCntIopGap[3],      "copied frames four or more refreshes after the previous one (idle)");
+NVACCEL_CNT(nvaccel_iop_phase_us_sum, gIopPhaseUsSum,     "microseconds from the last VBL tick to each copied frame, summed");
+SYSCTL_INT(_debug, OID_AUTO, nvaccel_iop_vsync, CTLFLAG_RW | CTLFLAG_LOCKED, &gIopVsync, 0, "1 = a copied frame completes on the next VBL tick (a flip's latch), 0 = at once");
+NVACCEL_CNT(nvaccel_iop_vsync_waits,  gCntIopVsyncWaits,  "completion checks answered 'not yet' (the frame waits for its tick)");
+NVACCEL_CNT(nvaccel_iop_vsync_late,   gCntIopVsyncLate,   "frames completed past two refreshes without a tick");
 static int    gIopFlip = 0;
 static SInt64 gCntIopFlip, gCntIopFlipHome, gCntIopFlipNo[8];
 SYSCTL_INT(_debug, OID_AUTO, nvaccel_iop_flip, CTLFLAG_RW | CTLFLAG_LOCKED | CTLFLAG_KERN, &gIopFlip, 0, "1 = scan the composited IOSurface out of its own VRAM (no copy)");
@@ -1405,6 +1442,11 @@ static void nvaccelInstallSysctl(void)
     sysctl_register_oid(&sysctl__debug_nvaccel_iop_sse);
     sysctl_register_oid(&sysctl__debug_nvaccel_iop_copy_us);    sysctl_register_oid(&sysctl__debug_nvaccel_iop_copy_us_max);
     sysctl_register_oid(&sysctl__debug_nvaccel_iop_copy_us_sum);
+    sysctl_register_oid(&sysctl__debug_nvaccel_iop_gap1);       sysctl_register_oid(&sysctl__debug_nvaccel_iop_gap2);
+    sysctl_register_oid(&sysctl__debug_nvaccel_iop_gap3);       sysctl_register_oid(&sysctl__debug_nvaccel_iop_gap4);
+    sysctl_register_oid(&sysctl__debug_nvaccel_iop_phase_us_sum);
+    sysctl_register_oid(&sysctl__debug_nvaccel_iop_vsync);      sysctl_register_oid(&sysctl__debug_nvaccel_iop_vsync_waits);
+    sysctl_register_oid(&sysctl__debug_nvaccel_iop_vsync_late);
     sysctl_register_oid(&sysctl__debug_nvaccel_iop_flip);       sysctl_register_oid(&sysctl__debug_nvaccel_iop_flips);
     sysctl_register_oid(&sysctl__debug_nvaccel_iop_flip_home);  sysctl_register_oid(&sysctl__debug_nvaccel_iop_flip_lock);
     sysctl_register_oid(&sysctl__debug_nvaccel_iop_flip_novram); sysctl_register_oid(&sysctl__debug_nvaccel_iop_flip_stale);

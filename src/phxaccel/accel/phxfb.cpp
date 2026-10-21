@@ -2,7 +2,8 @@
 // Like NullMoth's NMIntelFB (phase 1), it takes over the mode the firmware (GOP) already lit, at boot in place of the
 // firmware framebuffer (IONDRV), and writes nothing to the display engine: the scan-out surface is the boot console's
 // (IOPlatformExpert::getConsoleInfo), the accelerator's display pipe copies each finished frame into a write-combined CPU
-// mapping of it, and a 60 Hz timer stands in for the VBL interrupt WindowServer paces an accelerated display on.
+// mapping of it, and a timer at the panel's refresh (measured on the display engine, measureRefresh) stands in for the VBL
+// interrupt WindowServer paces an accelerated display on.
 #include <IOKit/IOLib.h>
 #include <IOKit/pci/IOPCIDevice.h>
 #include <IOKit/graphics/IOFramebuffer.h>
@@ -30,6 +31,24 @@ static bool gAliasSysctl;
 SYSCTL_INT(_debug, OID_AUTO, phxfb_alias, CTLFLAG_RW | CTLFLAG_LOCKED, &gAlias, 0,
            "1 = frames are copied into the scan-out through its system-RAM address (the carve-out), 0 = through the GPU's BAR");
 
+// The VBL tick. XNU's timer coalescing moves a kernel deadline by up to an eighth of its delay, at most 1 ms, so a
+// 120 Hz tick could land anywhere in the first millisecond after the vblank it stands for. The system-critical urgency
+// that is never moved is not exported to kexts (thread_call_enter_delayed_with_leeway), so the tick is armed 1.5 ms
+// early and re-armed for its deadline from there, each stage with an eighth of the previous slop, until less than
+// 50 us remain (debug.phxfb_vbl_staged, 0 = one plain deadline). The lateness of each tick is summed for the
+// measurements, and nvrm-accel.cpp times its presents against the last tick (gPhxVblLastAbs, gPhxFrameAbs).
+static int gVblStaged = 1;
+static SInt64 gVblN, gVblLateUsSum, gVblLateUsMax;
+uint64_t gPhxVblLastAbs, gPhxFrameAbs;
+volatile uint64_t gPhxVblSeq;   // ticks so far, counted before the handlers run: the display pipe completes on the next one
+SYSCTL_INT(_debug, OID_AUTO, phxfb_vbl_staged, CTLFLAG_RW | CTLFLAG_LOCKED, &gVblStaged, 0,
+           "1 = the VBL tick is armed early and re-armed until its deadline (little coalescing slop), 0 = one plain deadline");
+SYSCTL_QUAD(_debug, OID_AUTO, phxfb_vbl_n, CTLFLAG_RD | CTLFLAG_LOCKED, &gVblN, "VBL ticks fired");
+SYSCTL_QUAD(_debug, OID_AUTO, phxfb_vbl_late_us_sum, CTLFLAG_RW | CTLFLAG_LOCKED, &gVblLateUsSum, "microseconds the VBL ticks fired past their deadlines, summed");
+SYSCTL_QUAD(_debug, OID_AUTO, phxfb_vbl_late_us_max, CTLFLAG_RW | CTLFLAG_LOCKED, &gVblLateUsMax, "the latest VBL tick, microseconds past its deadline (writable: 0 restarts it)");
+static struct sysctl_oid *const kFbOids[] = { &sysctl__debug_phxfb_alias, &sysctl__debug_phxfb_vbl_staged, &sysctl__debug_phxfb_vbl_n,
+                                              &sysctl__debug_phxfb_vbl_late_us_sum, &sysctl__debug_phxfb_vbl_late_us_max };
+
 // The class name carries "AMD": CoreDisplay tells the GPU vendor from the framebuffer's class name (Intel, AMD, NVDA,
 // AppleParavirt), and for any other name it turns IOPresentment off, which left the panel on the software compositor
 // with the Metal compositor up for the accelerator (GetGPUVendorForFramebufferService -> 1, 2026-10-20).
@@ -45,14 +64,16 @@ class PhxAMDFB : public IOFramebuffer {
     unsigned fAliasTries = 0;
     volatile UInt32 fAliasBusy = 0;
     struct Irq { IOFBInterruptProc proc = nullptr; OSObject *target = nullptr; void *ref = nullptr; };
-    Irq fVbl, fConnect;
+    Irq fVbl[4], fConnect;   // IOFramebuffer itself and, when it asks, IOAccelDisplayPipe each register a VBL handler
     thread_call_t fVblTimer = nullptr;
     uint64_t fVblNext = 0;
     volatile bool fStopping = false;
     bool fBeside = false;   // another framebuffer (the firmware's IONDRV one) already drives this GPU: not the console
     IOPhysicalAddress fBase = 0;
     uint32_t fWidth = 0, fHeight = 0, fRowBytes = 0;
-    static constexpr uint64_t kFrameNs = 16666667ull;
+    static constexpr uint64_t kFrameNs = 16666667ull;   // 60 Hz, when the refresh cannot be measured
+    uint64_t fFrameNs = kFrameNs;
+    uint32_t fRefreshMilliHz = 60000, fHTotal = 0, fVTotal = 0;
     static constexpr unsigned kBootHoldSec = 120;   // the boot daemon releases it sooner (debug.phxfb_hold=0)
     // The accelerator is NullMoth's, written against an NVIDIA RM: it backs each IOAccel surface with "VRAM" from the
     // framebuffer (nvAllocVram) and a GPU address from the RM (nvGpuVaAlloc/Map). On the 780M nothing on the GPU reads
@@ -131,11 +152,52 @@ class PhxAMDFB : public IOFramebuffer {
     static void vblFire(thread_call_param_t p0, thread_call_param_t) {
         PhxAMDFB *me = (PhxAMDFB *)p0;
         if (me->fStopping) return;
-        if (me->fVbl.proc) me->fVbl.proc(me->fVbl.target, me->fVbl.ref);
-        uint64_t period; nanoseconds_to_absolutetime(kFrameNs, &period);
+        const uint64_t at = mach_absolute_time(), due = me->fVblNext;
+        uint64_t near; nanoseconds_to_absolutetime(50000, &near);
+        if (gVblStaged && due > at + near) { thread_call_enter_delayed(me->fVblTimer, due); return; }   // an early stage
+        if (due && at > due) {
+            uint64_t ns; absolutetime_to_nanoseconds(at - due, &ns);
+            const SInt64 us = (SInt64)(ns / 1000);
+            OSAddAtomic64(us, &gVblLateUsSum);
+            if (us > gVblLateUsMax) gVblLateUsMax = us;
+        }
+        OSAddAtomic64(1, &gVblN);
+        gPhxVblLastAbs = due ? due : at;   // the vblank this tick stands for
+        __atomic_add_fetch(&gPhxVblSeq, 1, __ATOMIC_RELEASE);
+        for (const Irq &q : me->fVbl) {
+            const IOFBInterruptProc proc = __atomic_load_n(&q.proc, __ATOMIC_ACQUIRE);
+            if (proc) proc(q.target, q.ref);
+        }
+        uint64_t period; nanoseconds_to_absolutetime(me->fFrameNs, &period);
         const uint64_t now = mach_absolute_time();
         me->fVblNext = (me->fVblNext && me->fVblNext + period > now) ? me->fVblNext + period : now + period;
-        thread_call_enter_delayed(me->fVblTimer, me->fVblNext);
+        uint64_t lead; nanoseconds_to_absolutetime(1500000, &lead);
+        thread_call_enter_delayed(me->fVblTimer, gVblStaged ? me->fVblNext - lead : me->fVblNext);
+    }
+
+    // The firmware lit the panel at its native refresh, which the VBL timer and the mode must report: they said 60 Hz while
+    // the panel scanned at 120 (OTG frame counter: 392 frames in 3.28 s), and WindowServer composited at 60 fps (2026-10-20).
+    // Read-only: OTG0's H/V totals (DCN 3.1.4: segment 2 base 0x34c0 + 0x1b2a / 0x1b2f) and its frame counter (+0x1b4c)
+    // over ~200 ms, snapped to a standard rate when within 2 %.
+    void measureRefresh() {
+        IOMemoryMap *mm = fPCI ? fPCI->mapDeviceMemoryWithRegister(kIOPCIConfigBaseAddress5) : nullptr;
+        if (!mm || mm->getLength() < 0x5100u * 4) { OSSafeReleaseNULL(mm); PFBLOG("refresh: no MMIO view, 60 Hz assumed"); return; }
+        volatile uint32_t *r = (volatile uint32_t *)mm->getVirtualAddress();
+        const uint32_t ctl = r[0x34c0 + 0x1b41], ht = r[0x34c0 + 0x1b2a] + 1, vt = r[0x34c0 + 0x1b2f] + 1;
+        const uint32_t c0 = r[0x34c0 + 0x1b4c] & 0xffffff; const uint64_t t0 = mach_absolute_time();
+        IOSleep(200);
+        const uint32_t c1 = r[0x34c0 + 0x1b4c] & 0xffffff; const uint64_t t1 = mach_absolute_time();
+        mm->release();
+        uint64_t ns; absolutetime_to_nanoseconds(t1 - t0, &ns);
+        const uint32_t frames = (c1 - c0) & 0xffffff;
+        if (!(ctl & 1) || !ns || frames < 4 || ht < 100 || vt < 100) { PFBLOG("refresh: OTG0 not running (ctl 0x%x, %u frames), 60 Hz assumed", ctl, frames); return; }
+        uint32_t mhz = (uint32_t)(((uint64_t)frames * 1000000000000ull) / ns);
+        static const uint32_t kStd[] = { 48000, 50000, 60000, 75000, 90000, 100000, 120000, 144000, 165000, 240000 };
+        for (uint32_t k : kStd) if (mhz > k * 49 / 50 && mhz < k * 51 / 50) { mhz = k; break; }
+        if (mhz < 24000 || mhz > 360000) { PFBLOG("refresh: %u mHz measured, out of range - 60 Hz assumed", mhz); return; }
+        fRefreshMilliHz = mhz; fHTotal = ht; fVTotal = vt;
+        fFrameNs = 1000000000000ull / mhz;
+        PFBLOG("refresh: OTG0 %ux%u totals, %u frames in %llu us -> %u.%03u Hz", ht, vt, frames, ns / 1000, mhz / 1000, mhz % 1000);
     }
 
 public:
@@ -155,7 +217,7 @@ public:
         if (mode != 1 || !info) return kIOReturnBadArgument;
         bzero(info, sizeof(*info));
         info->maxDepthIndex = 0; info->nominalWidth = fWidth; info->nominalHeight = fHeight;
-        info->refreshRate = 60 << 16; info->flags = kDisplayModeValidFlag | kDisplayModeSafeFlag | kDisplayModeDefaultFlag;
+        info->refreshRate = (IOFixed1616)(((uint64_t)fRefreshMilliHz << 16) / 1000); info->flags = kDisplayModeValidFlag | kDisplayModeSafeFlag | kDisplayModeDefaultFlag;
         return kIOReturnSuccess;
     }
     UInt64 getPixelFormatsForDisplayMode(IODisplayModeID, IOIndex) override { return 0; }
@@ -180,11 +242,23 @@ public:
     }
     IOItemCount getConnectionCount() override { return 1; }
     IOReturn registerForInterruptType(IOSelect type, IOFBInterruptProc proc, OSObject *target, void *ref, void **iref) override {
-        if (type == kIOFBVBLInterruptType) { fVbl = { proc, target, ref }; if (iref) *iref = &fVbl; return kIOReturnSuccess; }
+        if (type == kIOFBVBLInterruptType) {
+            for (Irq &q : fVbl) if (!q.proc) {
+                q.target = target; q.ref = ref; __atomic_store_n(&q.proc, proc, __ATOMIC_RELEASE);
+                PFBLOG("VBL handler %u: %s", (unsigned)(&q - fVbl), target ? target->getMetaClass()->getClassName() : "(no target)");
+                if (iref) *iref = &q;
+                return kIOReturnSuccess;
+            }
+            PFBLOG("VBL handler refused: all %u taken", (unsigned)(sizeof fVbl / sizeof fVbl[0]));
+            return kIOReturnNoResources;
+        }
         if (type == kIOFBConnectInterruptType) { fConnect = { proc, target, ref }; if (iref) *iref = &fConnect; return kIOReturnSuccess; }
         return kIOReturnUnsupported;
     }
-    IOReturn unregisterInterrupt(void *) override { return kIOReturnSuccess; }
+    IOReturn unregisterInterrupt(void *iref) override {
+        for (Irq &q : fVbl) if (iref == &q) __atomic_store_n(&q.proc, (IOFBInterruptProc)nullptr, __ATOMIC_RELEASE);
+        return kIOReturnSuccess;
+    }
     IOReturn setInterruptState(void *, UInt32) override { return kIOReturnSuccess; }
     IOReturn setGammaTable(UInt32, UInt32, UInt32, void *) override { return kIOReturnSuccess; }
     IOReturn setGammaTable(UInt32, UInt32, UInt32, void *, bool) override { return kIOReturnSuccess; }
@@ -396,8 +470,12 @@ bool PhxAMDFB::start(IOService *provider)
     fVa = IORangeAllocator::withRange(kVaSize - 1, PAGE_SIZE, 0, IORangeAllocator::kLocking);
     setProperty("built-in", kOSBooleanTrue);
     setProperty("PhxFBWidth", fWidth, 32); setProperty("PhxFBHeight", fHeight, 32);   // the AGDC's panel timing reads these
+    measureRefresh();
+    setProperty("PhxFBRefreshMilliHz", fRefreshMilliHz, 32);
+    if (fHTotal) { setProperty("PhxFBHTotal", fHTotal, 32); setProperty("PhxFBVTotal", fVTotal, 32); }   // the AGDC's panel timing
+    nanoseconds_to_absolutetime(fFrameNs, &gPhxFrameAbs);
     fVblTimer = thread_call_allocate(vblFire, this);
-    if (fVblTimer) { uint64_t d; clock_interval_to_deadline((uint32_t)(kFrameNs / 1000), kMicrosecondScale, &d); fVblNext = d; thread_call_enter_delayed(fVblTimer, d); }
+    if (fVblTimer) { uint64_t d; clock_interval_to_deadline((uint32_t)(fFrameNs / 1000), kMicrosecondScale, &d); fVblNext = d; thread_call_enter_delayed(fVblTimer, d); }
     static IOPMPowerState states[2] = {
         { 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
         { 1, kIOPMDeviceUsable, kIOPMPowerOn, kIOPMPowerOn, 0, 0, 0, 0, 0, 0, 0, 0 },
@@ -405,9 +483,9 @@ bool PhxAMDFB::start(IOService *provider)
     registerPowerDriver(this, states, 2);
     phxHoldInit(this, kBootHoldSec);
     phxAgdcInstall();
-    if (!gAliasSysctl) { sysctl_register_oid(&sysctl__debug_phxfb_alias); gAliasSysctl = true; }
+    if (!gAliasSysctl) { for (auto *o : kFbOids) sysctl_register_oid(o); gAliasSysctl = true; }
     PFBLOG("panel published: %ux%u row %u at 0x%llx (vbl timer %s)", fWidth, fHeight, fRowBytes,
-           (unsigned long long)fBase, fVblTimer ? "60 Hz" : "MISSING");
+           (unsigned long long)fBase, fVblTimer ? "running" : "MISSING");
     return true;
 }
 
@@ -416,7 +494,8 @@ void PhxAMDFB::stop(IOService *provider)
     fStopping = true;
     phxAgdcRemove();
     if (fVblTimer) { thread_call_cancel(fVblTimer); while (!thread_call_free(fVblTimer)) { thread_call_cancel(fVblTimer); IOSleep(5); } fVblTimer = nullptr; }
-    if (gAliasSysctl) { sysctl_unregister_oid(&sysctl__debug_phxfb_alias); gAliasSysctl = false; }
+    if (gAliasSysctl) { for (auto *o : kFbOids) sysctl_unregister_oid(o); gAliasSysctl = false; }
+    gPhxFrameAbs = 0;
     OSSafeReleaseNULL(fAliasMap);
     OSSafeReleaseNULL(fSurfMap);
     OSSafeReleaseNULL(fVa);

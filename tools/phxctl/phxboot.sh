@@ -55,6 +55,9 @@ if [ $M2 = 1 ]; then
     sysctl -w debug.phxagdc=1 >/dev/null; sleep 1
     # frames copied with SSE streaming loads (XMM saved around them): 1.0 ms a frame against 2.1 (2026-10-20)
     sysctl -w debug.nvaccel_iop_sse=1 >/dev/null
+    # a copied frame completes on the next VBL tick, as a flip latches: fewer frames presented twice within one refresh
+    # and then a skipped one (2026-10-21)
+    sysctl -w debug.nvaccel_iop_vsync=1 >/dev/null 2>&1
     all_apps "; WindowServer composites on the 780M (armed only)" '!WindowServer'
     # WindowServer's process starts early but opens the panel only once GPUWrangler publishes the GPU, which the busy
     # hold delays. A panel opened before the arming (the hold timed out) stays black, and a restarted WindowServer then

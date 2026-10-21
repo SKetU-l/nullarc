@@ -19,13 +19,17 @@ int main(int argc, char **argv)
         NSView *v = w.contentView;
         v.wantsLayer = YES;
         v.layer.backgroundColor = NSColor.systemTealColor.CGColor;
+        // PHX_ANIM_BASE: the first layer's animation period in seconds (default 1.0), PHX_ANIM_NOFX=1: no material panel
+        const double base = getenv("PHX_ANIM_BASE") ? atof(getenv("PHX_ANIM_BASE")) : 1.0;
         for (int i = 0; i < 12; i++) {
             CALayer *l = [CALayer layer];
             l.frame = CGRectMake(50 + i * 110, 100, 80, 80);
             l.cornerRadius = 16;
             l.backgroundColor = [NSColor colorWithHue:i / 12.0 saturation:0.8 brightness:0.9 alpha:1].CGColor;
             CABasicAnimation *a = [CABasicAnimation animationWithKeyPath:@"position.y"];
-            a.fromValue = @100; a.toValue = @800; a.duration = 1.0 + i * 0.1; a.autoreverses = YES; a.repeatCount = HUGE_VALF;
+            a.fromValue = @100; a.toValue = @800; a.duration = base + i * 0.1; a.autoreverses = YES; a.repeatCount = HUGE_VALF;
+            // PHX_ANIM_FPS=n: the animations ask Core Animation for n frames a second (preferredFrameRateRange)
+            if (getenv("PHX_ANIM_FPS")) { const float r = atof(getenv("PHX_ANIM_FPS")); a.preferredFrameRateRange = CAFrameRateRangeMake(r, r, r); }
             [l addAnimation:a forKey:@"y"];
             [v.layer addSublayer:l];
         }
@@ -33,11 +37,12 @@ int main(int argc, char **argv)
         fx.material = NSVisualEffectMaterialHUDWindow;
         fx.blendingMode = NSVisualEffectBlendingModeWithinWindow;
         fx.state = NSVisualEffectStateActive;
-        [v addSubview:fx];
+        if (!getenv("PHX_ANIM_NOFX")) [v addSubview:fx];
         [w makeKeyAndOrderFront:nil];
         [NSApp activateIgnoringOtherApps:YES];
         __block int t = 0;
-        [NSTimer scheduledTimerWithTimeInterval:1 / 60.0 repeats:YES block:^(NSTimer *tm) {
+        // PHX_ANIM_STILL=1: the window stays put (only the layers and the material animate)
+        if (!getenv("PHX_ANIM_STILL")) [NSTimer scheduledTimerWithTimeInterval:1 / 60.0 repeats:YES block:^(NSTimer *tm) {
             NSRect f = w.frame;
             f.origin.x = wx + 150 * sin(++t / 30.0);
             [w setFrame:f display:NO];

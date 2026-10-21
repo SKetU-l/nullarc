@@ -151,6 +151,7 @@ public:
     enum { kIopSrcSlots = 4 };
     struct NVIopSrc { unsigned id; IOMemoryDescriptor *md; IOMemoryMap *map; } fIopSrc[kIopSrcSlots];
     unsigned fIopNext;
+    uint64_t fIopVblSeq;   // PhxFB's VBL tick count when the last frame was copied (debug.nvaccel_iop_vsync)
     const void *iopMapSurface(unsigned id, IOMemoryDescriptor *md, unsigned long long need);
     void        iopDropSources();
 };

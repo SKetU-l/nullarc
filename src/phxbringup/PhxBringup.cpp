@@ -22,7 +22,7 @@
 
 #include "PhxNativeABI.h"
 
-#define PHX_KEXT_BUILD 30u
+#define PHX_KEXT_BUILD 31u
 
 // debug.phxbos_flush: how a client's BOs are made coherent around each submission and each completed wait.
 // 2 = clflush every line (the bring-up way), 1 = clflushopt (the same lines, pipelined), 0 = none (the GPU maps system
@@ -1328,6 +1328,7 @@ IOReturn IOAccelPhxNativeClient::doQueryInfo(IOExternalMethodArguments *a) {
     return kIOReturnSuccess;
 }
 
+static constexpr uint64_t kGoldenTscUpper = 0x16a2d;
 IOReturn IOAccelPhxNativeClient::doReadRegs(IOExternalMethodArguments *a) {
     if (a->scalarInputCount != 3 || a->scalarOutputCount != 0 || a->structureInputSize != 0)
         return kIOReturnBadArgument;
@@ -1335,7 +1336,12 @@ IOReturn IOAccelPhxNativeClient::doReadRegs(IOExternalMethodArguments *a) {
     if (count < 1 || count > 16 || a->scalarInput[2] != 0xFFFFFFFFull || a->structureOutputSize != count * 4 ||
         a->scalarInput[0] > 0xFFFFFFFFull)
         return kIOReturnBadArgument;
-    if (!privileged)
+    // SMUIO's GOLDEN_TSC (upper 0x16a2d, lower 0x16a2e on Phoenix, SMUIO 13.0.7 base 0x16a00) is the 100 MHz counter the
+    // CP stamps command buffers with: every client may read it (Mesa's AMDGPU_INFO_TIMESTAMP, which calibrates GPU
+    // times against the host's; without it Metal's GPUStartTime/GPUEndTime were 0 in every app).
+    const uint64_t first = a->scalarInput[0];
+    const bool tsc = first >= kGoldenTscUpper && first + count <= kGoldenTscUpper + 2;
+    if (!privileged && !tsc)
         return kIOReturnNotPrivileged;
     return owner->readRegs(static_cast<uint32_t>(a->scalarInput[0]), static_cast<uint32_t>(count),
                            static_cast<uint32_t *>(a->structureOutput));
