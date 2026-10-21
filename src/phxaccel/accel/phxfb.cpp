@@ -15,6 +15,7 @@
 #include <kern/thread_call.h>
 #include <IOKit/IOBufferMemoryDescriptor.h>
 #include <IOKit/IORangeAllocator.h>
+#include <IOKit/IOSubMemoryDescriptor.h>
 #include <libkern/OSAtomic.h>
 #include <sys/sysctl.h>
 #include "nvrm_vram_abi.h"
@@ -86,6 +87,46 @@ class PhxAMDFB : public IOFramebuffer {
     volatile SInt64 fVramBytes = 0;
     volatile SInt32 fHandles = 0;
     unsigned fRmLogged = 0;
+    // VRAM comes from one physically contiguous pool taken at start, while memory is still unfragmented: allocated one
+    // by one, a 16 MB surface found no contiguous run hours into a session, and when WindowServer re-allocated its frame
+    // on display wake the panel kept the frame from before the display slept (2026-10-21). An allocation is a
+    // sub-descriptor of the pool (its handle); past the pool each one is contiguous memory of its own, as before.
+    static constexpr uint64_t kPoolTry[3] = { 512ull << 20, 256ull << 20, 128ull << 20 };
+    IOBufferMemoryDescriptor *fPool = nullptr;
+    IORangeAllocator *fPoolRange = nullptr;
+    uint8_t *fPoolKva = nullptr;
+    uint64_t fPoolPhys = 0, fPoolBytes = 0;
+
+    void poolInit() {
+        for (uint64_t bytes : kPoolTry) {
+            IOBufferMemoryDescriptor *b = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
+                kIODirectionInOut | kIOMemoryPhysicallyContiguous, bytes, 0x0000FFFFFFFFF000ull);
+            if (b && b->prepare() != kIOReturnSuccess) OSSafeReleaseNULL(b);
+            if (!b) continue;
+            fPoolRange = IORangeAllocator::withRange(bytes, PAGE_SIZE, 0, IORangeAllocator::kLocking);
+            if (!fPoolRange) { b->complete(); b->release(); return; }
+            fPool = b; fPoolKva = (uint8_t *)b->getBytesNoCopy(); fPoolBytes = bytes;
+            fPoolPhys = b->getPhysicalSegment(0, nullptr, kIOMemoryMapperNone);
+            PFBLOG("VRAM pool: %llu MB at phys 0x%llx", bytes >> 20, fPoolPhys);
+            return;
+        }
+        PFBLOG("VRAM pool: no contiguous run of %llu MB or less, every allocation on its own", kPoolTry[2] >> 20);
+    }
+    void poolFree() {
+        OSSafeReleaseNULL(fPoolRange);
+        if (fPool) { fPool->complete(); OSSafeReleaseNULL(fPool); }
+        fPoolKva = nullptr; fPoolPhys = fPoolBytes = 0;
+    }
+    bool poolAlloc(NVRMVramRequest *r, uint64_t bytes) {
+        IORangeScalar off = 0;
+        if (!fPoolRange || !fPoolRange->allocate(bytes, &off, PAGE_SIZE)) return false;
+        IOSubMemoryDescriptor *s = IOSubMemoryDescriptor::withSubRange(fPool, off, bytes, kIODirectionInOut);
+        if (!s) { fPoolRange->deallocate(off, bytes); return false; }
+        bzero(fPoolKva + off, bytes);
+        r->handle = s; r->kva = fPoolKva + off; r->actualSize = bytes; r->allocationCookie = 0;
+        r->phys = fPoolPhys + off;
+        return true;
+    }
 
     IOReturn vramAlloc(NVRMVramRequest *r) {
         if (!r || r->version != NVRM_VRAM_ABI_VERSION || !r->size) return kIOReturnBadArgument;
@@ -94,6 +135,11 @@ class PhxAMDFB : public IOFramebuffer {
             OSAddAtomic64(-(SInt64)bytes, &fVramBytes);
             if (fRmLogged++ < 16) PFBLOG("VRAM: %llu bytes refused, %lld already out (cap %llu)", bytes, fVramBytes, kVramCap);
             return kIOReturnNoMemory;
+        }
+        if (poolAlloc(r, bytes)) {
+            r->mappedTotal = (uint64_t)fVramBytes;
+            if (fRmLogged++ < 16) PFBLOG("VRAM: %llu bytes at phys 0x%llx from the pool (%lld out)", bytes, r->phys, fVramBytes);
+            return kIOReturnSuccess;
         }
         IOBufferMemoryDescriptor *b = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
             kIODirectionInOut | kIOMemoryPhysicallyContiguous, bytes, 0x0000FFFFFFFFF000ull);
@@ -112,6 +158,14 @@ class PhxAMDFB : public IOFramebuffer {
     }
     IOReturn vramFree(NVRMVramRequest *r) {
         if (!r || r->version != NVRM_VRAM_ABI_VERSION) return kIOReturnBadArgument;
+        if (IOSubMemoryDescriptor *s = OSDynamicCast(IOSubMemoryDescriptor, (OSObject *)r->handle)) {
+            const uint64_t off = (uint64_t)((uint8_t *)r->kva - fPoolKva), len = s->getLength();
+            if (!fPoolRange || (uint8_t *)r->kva < fPoolKva || off + len > fPoolBytes) return kIOReturnBadArgument;
+            OSAddAtomic64(-(SInt64)len, &fVramBytes);
+            fPoolRange->deallocate(off, len);
+            s->release();
+            return kIOReturnSuccess;
+        }
         IOBufferMemoryDescriptor *b = OSDynamicCast(IOBufferMemoryDescriptor, (OSObject *)r->handle);
         if (!b) return kIOReturnBadArgument;
         OSAddAtomic64(-(SInt64)b->getLength(), &fVramBytes);
@@ -468,6 +522,7 @@ bool PhxAMDFB::start(IOService *provider)
     setProperty("IOFBDependentIndex", 0ull, 32);
     if (!IOFramebuffer::start(provider)) { OSSafeReleaseNULL(fSurfMap); return false; }
     fVa = IORangeAllocator::withRange(kVaSize - 1, PAGE_SIZE, 0, IORangeAllocator::kLocking);
+    poolInit();
     setProperty("built-in", kOSBooleanTrue);
     setProperty("PhxFBWidth", fWidth, 32); setProperty("PhxFBHeight", fHeight, 32);   // the AGDC's panel timing reads these
     measureRefresh();
@@ -499,5 +554,6 @@ void PhxAMDFB::stop(IOService *provider)
     OSSafeReleaseNULL(fAliasMap);
     OSSafeReleaseNULL(fSurfMap);
     OSSafeReleaseNULL(fVa);
+    poolFree();
     IOFramebuffer::stop(provider);
 }
