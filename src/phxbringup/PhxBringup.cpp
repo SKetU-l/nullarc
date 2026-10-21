@@ -22,7 +22,7 @@
 
 #include "PhxNativeABI.h"
 
-#define PHX_KEXT_BUILD 31u
+#define PHX_KEXT_BUILD 32u
 
 // debug.phxbos_flush: how a client's BOs are made coherent around each submission and each completed wait.
 // 2 = clflush every line (the bring-up way), 1 = clflushopt (the same lines, pipelined), 0 = none (the GPU maps system
@@ -154,9 +154,14 @@ private:
     // One GPUVM context (page tables) per client, and the eight hardware VMIDs lent to contexts at submission time,
     // as amdgpu does: a fixed VMID per client capped Metal at eight processes, and with every app allowed Metal the
     // ninth got no device (2026-10-20). A context's handle is its index + 1.
+    // A context's page tables, in physically contiguous 64 KiB chunks allocated as it maps (most contexts need one or
+    // two): a single 4 MiB contiguous pool per context failed once memory was fragmented. Table i is page i % 16 of
+    // chunk i / 16; table 0 is the root.
+    static constexpr uint32_t kPtChunkBytes = 64u << 10, kPtChunkPages = kPtChunkBytes / 4096, kPtChunks = 64;
     struct VmCtx {
-        IOBufferMemoryDescriptor *pool;   // physically contiguous system memory, page 0 = root
-        uint64_t phys;
+        IOBufferMemoryDescriptor *chunk[kPtChunks];
+        uint64_t chunkPhys[kPtChunks];
+        uint64_t phys;                    // the root table
         uint32_t pages, used;
         bool busy;
         uint32_t hw;                      // the hardware VMID pointed at these tables, 0 = none
@@ -172,6 +177,7 @@ private:
     uint32_t vmBind(uint32_t handle);
     VmCtx *vmCtx(uint32_t handle) { return handle && handle <= kMaxCtx && vm[handle - 1].busy ? &vm[handle - 1] : nullptr; }
     uint64_t *ptTable(const VmCtx &c, uint64_t phys) const;
+    uint64_t ptTablePhys(VmCtx &c, uint32_t i);
     uint64_t *vmPte(VmCtx &c, uint64_t va, bool alloc);
     void vmFlushTlb(uint32_t vmid) const;
     void ringPut(GpuQueue &q, uint32_t idx, uint32_t value);
@@ -326,8 +332,9 @@ void PhxBringup::stop(IOService *provider) {
     }
     gq[0].ready = gq[1].ready = false;
     for (VmCtx &c : vm) {
-        if (c.pool)
-            c.pool->release();
+        for (IOBufferMemoryDescriptor *b : c.chunk)
+            if (b)
+                b->release();
         c = VmCtx{};
     }
     for (HwVmid &h : hwv)
@@ -477,7 +484,6 @@ IOReturn PhxBringup::sysMem(uint64_t op, uint64_t a, uint64_t b, uint64_t *out0,
 static constexpr uint32_t kFirstUserVmid = 8, kNumUserVmids = 8;   // VMIDs 8..15, lent to client contexts (vmBind)
 static constexpr uint64_t kPteSysFlags = 0x77ull | (4ull << 48);  // VALID SYSTEM SNOOPED EXEC READ WRITE, MTYPE 4
 static constexpr uint64_t kPtAddrMask = 0x0000FFFFFFFFF000ull;
-static constexpr uint32_t kPtPoolBytes = 4u << 20;                // page tables of one context (1024 pages)
 // GC registers (absolute dword index, GC base 0x1260): context n = context 0 + n (CNTL) / + 2n (address pairs),
 // invalidation engine 17
 static constexpr uint32_t kRegCtx0Cntl = 0x28E8, kRegCtx0BaseLo = 0x2953, kRegCtx0StartLo = 0x2973, kRegCtx0EndLo = 0x2993;
@@ -488,23 +494,53 @@ static inline void flushLine(const volatile void *p) {
 }
 
 uint64_t *PhxBringup::ptTable(const VmCtx &c, uint64_t phys) const {
-    return reinterpret_cast<uint64_t *>(static_cast<uint8_t *>(c.pool->getBytesNoCopy()) + (phys - c.phys));
+    for (uint32_t i = 0; i < kPtChunks && c.chunk[i]; i++)
+        if (phys - c.chunkPhys[i] < kPtChunkBytes)
+            return reinterpret_cast<uint64_t *>(static_cast<uint8_t *>(c.chunk[i]->getBytesNoCopy()) + (phys - c.chunkPhys[i]));
+    return nullptr;
+}
+
+// The physical address of table i, allocating (zeroed, flushed) the chunk it lives in; 0 when that fails.
+uint64_t PhxBringup::ptTablePhys(VmCtx &c, uint32_t i) {
+    const uint32_t k = i / kPtChunkPages;
+    if (k >= kPtChunks)
+        return 0;
+    if (!c.chunk[k]) {
+        IOBufferMemoryDescriptor *b = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
+            kernel_task, kIODirectionInOut | kIOMemoryPhysicallyContiguous, kPtChunkBytes, kPtAddrMask);
+        if (!b)
+            return 0;
+        uint8_t *p = static_cast<uint8_t *>(b->getBytesNoCopy());
+        bzero(p, kPtChunkBytes);
+        for (uint32_t o = 0; o < kPtChunkBytes; o += 64)
+            flushLine(p + o);
+        c.chunk[k] = b;
+        c.chunkPhys[k] = b->getPhysicalAddress();
+    }
+    return c.chunkPhys[k] + static_cast<uint64_t>(i % kPtChunkPages) * 4096;
 }
 
 uint64_t *PhxBringup::vmPte(VmCtx &c, uint64_t va, bool alloc) {
     uint64_t tbl = c.phys;
     for (int shift = 39; shift >= 21; shift -= 9) {
-        uint64_t *e = ptTable(c, tbl) + ((va >> shift) & 511);
+        uint64_t *t = ptTable(c, tbl);
+        if (!t)
+            return nullptr;
+        uint64_t *e = t + ((va >> shift) & 511);
         if (!(*e & 1)) {
             if (!alloc || c.used >= c.pages)
                 return nullptr;
-            const uint64_t child = c.phys + static_cast<uint64_t>(c.used++) * 4096;
+            const uint64_t child = ptTablePhys(c, c.used);
+            if (!child)
+                return nullptr;
+            c.used++;
             *e = child | 7;
             flushLine(e);
         }
         tbl = *e & kPtAddrMask;
     }
-    return ptTable(c, tbl) + ((va >> 12) & 511);
+    uint64_t *t = ptTable(c, tbl);
+    return t ? t + ((va >> 12) & 511) : nullptr;
 }
 
 void PhxBringup::vmFlushTlb(uint32_t vmid) const {
@@ -524,17 +560,11 @@ uint32_t PhxBringup::vmidAlloc() {
         VmCtx &c = vm[i];
         if (c.busy)
             continue;
-        if (!c.pool) {
-            c.pool = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(
-                kernel_task, kIODirectionInOut | kIOMemoryPhysicallyContiguous, kPtPoolBytes, kPtAddrMask);
-            if (!c.pool)
+        if (!c.chunk[0]) {
+            c.phys = ptTablePhys(c, 0);
+            if (!c.phys)
                 break;
-            c.phys = c.pool->getPhysicalAddress();
-            c.pages = kPtPoolBytes / 4096;
-            uint8_t *p = static_cast<uint8_t *>(c.pool->getBytesNoCopy());
-            bzero(p, kPtPoolBytes);
-            for (uint32_t o = 0; o < kPtPoolBytes; o += 64)
-                flushLine(p + o);
+            c.pages = kPtChunks * kPtChunkPages;
         }
         c.used = 1;
         c.busy = true;
@@ -603,10 +633,11 @@ void PhxBringup::vmidFree(uint32_t handle, uint64_t lastSeq) {
         IOSleep(1);
     IOLockLock(gpuLock);
     VmCtx &c = vm[handle - 1];
-    if (c.pool) {
-        uint8_t *p = static_cast<uint8_t *>(c.pool->getBytesNoCopy());
-        bzero(p, static_cast<size_t>(c.used) * 4096);
-        for (uint32_t o = 0; o < c.used * 4096u; o += 64)
+    for (uint32_t k = 0; k < kPtChunks && c.chunk[k] && k * kPtChunkPages < c.used; k++) {
+        const uint32_t n = c.used - k * kPtChunkPages < kPtChunkPages ? c.used - k * kPtChunkPages : kPtChunkPages;
+        uint8_t *p = static_cast<uint8_t *>(c.chunk[k]->getBytesNoCopy());
+        bzero(p, static_cast<size_t>(n) * 4096);
+        for (uint32_t o = 0; o < n * 4096u; o += 64)
             flushLine(p + o);
     }
     if (c.hw) {
@@ -1395,8 +1426,13 @@ IOReturn IOAccelPhxNativeClient::doBoCreate(IOExternalMethodArguments *a) {
     if (h >= PHXN_MAX_BOS)
         return kIOReturnNoResources;
 
+    // Page alignment only: the GPU maps BOs page by page, and the client picks the VA (GEMVA) with its own alignment.
+    // Handed to IOBufferMemoryDescriptor, RADV's 64 KiB..2 MiB alignment made every allocation PHYSICALLY CONTIGUOUS
+    // (XNU allocates an alignment above the page size with kmem_alloc_contig): once memory was fragmented, every
+    // buffer of 8 MiB or more failed after a 400 ms search, and each Metal app spent ~0.8 s at launch (2026-10-21).
+    (void)align;
     IOBufferMemoryDescriptor *md = IOBufferMemoryDescriptor::inTaskWithOptions(
-        kernel_task, kIODirectionInOut | kIOMemoryKernelUserShared, size, align);
+        kernel_task, kIODirectionInOut | kIOMemoryKernelUserShared, size, PAGE_SIZE);
     if (!md)
         return kIOReturnNoMemory;
     bzero(md->getBytesNoCopy(), size);
