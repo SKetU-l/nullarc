@@ -78,7 +78,13 @@ phxboot guards each boot:
   and creates `/Users/Shared/gpu/phxboot-off`;
 - if WindowServer crashes or hangs 3 times within 90 seconds on the GPU, phxboot goes back to the firmware framebuffer
   and reboots;
-- the bring-up arms a reboot timer that fires if it stalls for 3–4 minutes.
+- the bring-up arms a reboot timer that fires if it stalls for 3–4 minutes;
+- later in the session, a GPU hang shows up as WindowServer hanging again and again (the session is logged out and the
+  screen stays black): after two WindowServer hang reports within 5 minutes phxboot reboots the Mac, and after three
+  such reboots within an hour it puts WindowServer back on the firmware framebuffer.
+
+Background neural-network work (Photos analysis `mediaanalysisd`, `photoanalysisd`, `Spotlight`) is kept off the GPU:
+its convolution kernels hung the GPU in testing. It runs on the CPU as before.
 
 To turn the GPU off by hand: `sudo touch /Users/Shared/gpu/phxboot-off` and reboot. To turn it on again:
 `sudo rm /Users/Shared/gpu/phxboot-off` and reboot. If macOS no longer boots, start without PhxBringup: disable it in

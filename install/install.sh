@@ -38,11 +38,14 @@ args=$(nvram boot-args 2>/dev/null | cut -f2- || true)
 for a in amfi=0x80 amfi_get_out_of_my_way=0x1 phxdebug=1; do
     case " $args " in *" $a "*) say "  ✓ boot-arg $a" ;; *) fail "boot-arg $a is missing (OpenCore NVRAM -> boot-args)" ;; esac
 done
-if csrutil status | grep -q "status: enabled"; then fail "System Integrity Protection is on (OpenCore csr-active-config 7F080000)"
+if grep -q "status: enabled" <<<"$(csrutil status)"; then fail "System Integrity Protection is on (OpenCore csr-active-config 7F080000)"
 else say "  ✓ System Integrity Protection relaxed"; fi
-if ioreg -l -w0 | grep -q '"phx-build"'; then say "  ✓ PhxBringup.kext is loaded (build $(ioreg -l -w0 | grep -m1 '"phx-build"' | grep -oE '[0-9]+$'))"
+# read the registry once: grep -q on a pipe would stop ioreg early, and pipefail counts that as a failure
+IOR=$(ioreg -l -w0)
+build=$(grep -m1 '"phx-build"' <<<"$IOR" | grep -oE '[0-9]+$' || true)
+if [ -n "$build" ]; then say "  ✓ PhxBringup.kext is loaded (build $build)"
 else fail "PhxBringup.kext is not loaded: add EFI/OC/Kexts/PhxBringup.kext to OpenCore and reboot first"; fi
-if ioreg -rc IOPCIDevice -l -w0 | grep -qE '"IOName" = "pci1002,(15bf|15c8|1900|1901)"'; then say "  ✓ Radeon 780M/760M found"
+if grep -qE '"compatible" = <[^>]*"pci1002,(15bf|15c8|1900|1901)"' <<<"$IOR"; then say "  ✓ Radeon 780M/760M found"
 else say "  ! no Radeon 780M/760M (1002:15bf/15c8/1900/1901) found: other GPUs are not supported"; fi
 for f in EFI/OC/Kexts/PhxBringup.kext Library/Extensions/PhxAccel.kext PhxGPU/NVMTLDriver.bundle PhxGPU/nvmtl/libvulkan_radeon.dylib \
          gpu/phxboot.sh gpu/full.sh gpu/bringup5.sh gpu/kinst.sh gpu/phxctl/phxctl gpu/phxctl/mesboot gpu/local.phxboot.plist; do

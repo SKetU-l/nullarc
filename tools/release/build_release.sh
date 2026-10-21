@@ -14,8 +14,12 @@ FW="psp_13_0_4_toc.bin gc_11_0_1_pfp.bin gc_11_0_1_me.bin gc_11_0_1_mec.bin gc_1
 [ "$(id -u)" = 0 ] || { echo "run as root"; exit 1; }
 rm -rf "$P"; mkdir -p "$P"/{EFI/OC/Kexts,Library/Extensions,PhxGPU/nvmtl,gpu/phxctl,gpu/fw,extras/firebat-u6c}
 
-EFI=$(diskutil info disk0s1 | awk -F': *' '/Mount Point/ {print $2}')
-[ -n "$EFI" ] || { diskutil mount disk0s1 >/dev/null; EFI=$(diskutil info disk0s1 | awk -F': *' '/Mount Point/ {print $2}'); }
+# the EFI partition of the disk macOS booted from (disk numbers move when other drives enumerate first)
+STORE=$(diskutil apfs list "$(diskutil info / | awk -F': *' '/Part of Whole/ {print $2}')" | grep -m1 'Physical Store' | grep -oE 'disk[0-9]+s[0-9]+')
+ESP=${STORE%s*}s1
+EFI=$(diskutil info "$ESP" | awk -F': *' '/Mount Point/ {print $2}')
+[ -n "$EFI" ] || { diskutil mount "$ESP" >/dev/null; EFI=$(diskutil info "$ESP" | awk -F': *' '/Mount Point/ {print $2}'); }
+[ -d "$EFI/EFI/OC" ] || { echo "no OpenCore on $ESP"; exit 1; }
 ditto "$EFI/EFI/OC/Kexts/PhxBringup.kext" "$P/EFI/OC/Kexts/PhxBringup.kext"
 cp "$R/hardware/Sample.plist" "$R/hardware/REQUIRED_KEXTS.md" "$P/EFI/OC/"
 ditto /Library/Extensions/PhxAccel.kext "$P/Library/Extensions/PhxAccel.kext"

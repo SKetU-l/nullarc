@@ -14,9 +14,12 @@ echo "== $(date '+%F %T') phxboot"
 release() { sysctl -w debug.phxfb_hold=0 >/dev/null 2>&1; }
 apps_only() { printf '# phxboot: Metal for the built-in test tools only\n' > $ALLOW; }
 # every process gets the Metal device; WindowServer too once the accelerator is armed (NullMoth's own default list).
-# Denied ("-name", before "*"): none now. iconservicesagent was, while Tahoe's layered icons came out as flat yellow/green
-# squares; that was the plugin's storage-texture aliasing (fixed 2026-10-21), and stale Dock icon caches kept showing it.
-DENY=""
+# Denied ("-name", before "*"): the background neural-network users. mediaanalysisd (Photos analysis, which starts by
+# itself on an idle Mac on power) ran Espresso convolution kernels and hung the GPU within seconds (2026-10-21), and
+# Spotlight and photoanalysisd load the same MPS/Espresso kernels; on the CPU they only take longer.
+# iconservicesagent was denied once too, for flat yellow/green icons; that was the plugin's storage-texture aliasing
+# (fixed 2026-10-21).
+DENY="mediaanalysisd photoanalysisd Spotlight"
 all_apps() { { printf '# phxboot: Metal for every app%s\n' "$1"; for d in $DENY; do printf -- '-%s\n' "$d"; done
                printf '*\n'; [ -z "$2" ] || printf '%s\n' "$2"; } > $ALLOW; }
 # PhxAMDFB without the arming leaves the panel black: give up on M2 (until $G/phxboot-m2 is put back) and reboot into
@@ -85,3 +88,26 @@ fi
 [ -e $G/phxboot-m2 ] && nvram phxfb-boot=1 && echo "PhxAMDFB armed for the next boot"
 rm -f "$MARK"; sync
 echo "done $(date '+%T')"
+
+# A GPU hang leaves WindowServer waiting on a fence until watchdogd kills it, and every WindowServer after it hangs the
+# same way: the session is logged out and the screen stays black. There is no GPU reset yet, so two WindowServer
+# reports within 5 minutes reboot the Mac; three such reboots within an hour take WindowServer off the GPU.
+watch_hangs() {
+    local base n now first=0
+    base=$(ls $DR | grep -c '^WindowServer-.*\.ips$')
+    while sleep 15; do
+        n=$(ls $DR | grep -c '^WindowServer-.*\.ips$'); [ $n -gt $base ] || continue
+        now=$(date +%s); [ $first = 0 ] && first=$now
+        if [ $((n - base)) -ge 2 ]; then
+            echo "$(date '+%F %T') WindowServer hung $((n - base)) times on the GPU: rebooting"
+            echo $now >> $G/hang-reboots
+            if [ $(awk -v t=$((now - 3600)) '$1 > t' $G/hang-reboots | wc -l) -ge 3 ]; then
+                echo "3 GPU hangs within an hour: WindowServer goes back to the firmware framebuffer"
+                rm -f $G/phxboot-m2; nvram -d phxfb-boot
+            fi
+            sync; ${PHX_REBOOT:-shutdown -r now}; return
+        fi
+        [ $((now - first)) -gt 300 ] && { base=$n; first=0; }
+    done
+}
+[ $M2 = 1 ] && watch_hangs
