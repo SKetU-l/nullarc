@@ -1,17 +1,13 @@
-SUDO_CMD="sudo"
-if [ -n "$SUDO_PASS" ]; then
-    SUDO_CMD="echo '$SUDO_PASS' | sudo -S -p ''"
-fi
-
+#!/bin/bash
+# Phoenix GFX power-up in the Linux driver's order: PSP ring, TOC and TMR, the firmware of every engine through
+# LOAD_IP_FW, RLC autoload, then the SMU messages that switch GFX on (EnableGfxImu with 1). Firmware from ~/gpu/fw at
+# the offsets and sizes of linux-firmware's gc_11_0_1/psp_13_0_4 files. Run as root (phxboot) or as a user with sudo.
+# A reboot is armed for 3 minutes in case the PSP hangs and cancelled at the end.
 set -u
-
-SUDO_CMD=\"sudo\"
-if [ -n \"$SUDO_PASS\" ]; then
-    SUDO_CMD=\"echo '$SUDO_PASS' | sudo -S -p ''\"
-fi
-P(){ eval $SUDO_CMD ~/gpu/phxctl/phxctl "$@"; }
+SUDO=""; [ "$(id -u)" = 0 ] || SUDO=sudo
+P(){ $SUDO ~/gpu/phxctl/phxctl "$@"; }
 echo "== watchdog: reboot in 3 min unless cancelled =="
-eval $SUDO_CMD bash -c 'nohup shutdown -r +3 >/dev/null 2>&1 &'
+$SUDO bash -c 'nohup shutdown -r +3 >/dev/null 2>&1 &'
 P psp destroy >/dev/null 2>&1
 P psp create 0x1100000 >/dev/null
 P stage ~/gpu/fw/psp_13_0_4_toc.bin 256 2304 0x0 >/dev/null
@@ -45,4 +41,4 @@ P smu 0x2 0 | tail -1
 P smu 0x16 1 | tail -1
 sleep 2
 P regs 0xee7e 0x21a0 0x2004 0x263e
-eval $SUDO_CMD killall shutdown 2>/dev/null; echo "watchdog cancelled rc=$?"
+$SUDO killall shutdown 2>/dev/null; echo "watchdog cancelled rc=$?"
