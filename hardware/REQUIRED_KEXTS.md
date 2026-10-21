@@ -1,6 +1,6 @@
 # Required & Recommended Kexts for AMD Phoenix/Hawk Point (RDNA 3)
 
-This document lists the required and recommended third-party OpenCore kernel extensions (kexts) to boot macOS Sonoma (14.x) or macOS Tahoe (15.x / Darwin 25.x) on AMD Ryzen 7040/8040 series laptops (e.g. Firebat U6C, Framework 13 AMD, etc.), paired with the RDNA 3 graphics driver.
+This document lists the required and recommended third-party OpenCore kernel extensions (kexts) to boot macOS Tahoe 26 (Darwin 25) on AMD Ryzen 7040/8040 (Phoenix, Hawk Point) laptops and mini PCs with the nullarc graphics driver. The reference machine is a Firebat U6C (Ryzen 7 H 255); other machines are untested.
 
 > [!IMPORTANT]
 > To keep this repository focused and lightweight, third-party precompiled binaries are not bundled. Download official release builds directly from the upstream repositories listed below.
@@ -12,9 +12,9 @@ This document lists the required and recommended third-party OpenCore kernel ext
 | Kext | Purpose | Official Release Repository |
 | :--- | :--- | :--- |
 | **Lilu.kext** | Essential kernel patching engine required by all other kexts. | [acidanthera/Lilu](https://github.com/acidanthera/Lilu/releases) |
-| **VirtualSMC.kext** | Emulates Apple SMC chip (includes `SMCProcessor`, `SMCBatteryManager`). | [acidanthera/VirtualSMC](https://github.com/acidanthera/VirtualSMC/releases) |
+| **VirtualSMC.kext** | Emulates Apple SMC chip. Its `SMCBatteryManager` plugin gives the battery readout on laptops. | [acidanthera/VirtualSMC](https://github.com/acidanthera/VirtualSMC/releases) |
 | **RestrictEvents.kext** | Blocks unwanted system events, enables CPU name spoofing (`revpatch=cpuname,sbvmm`). | [acidanthera/RestrictEvents](https://github.com/acidanthera/RestrictEvents/releases) |
-| **AMFIPass.kext** | Allows passing AMFI validation on modern macOS versions without fully disabling AMFI. | [acidanthera/AMFIPass](https://github.com/acidanthera/AMFIPass/releases) |
+| **AMFIPass.kext** | Keeps apps that check AMFI working while the `amfi=0x80` boot-arg (needed to load nullarc into WindowServer) relaxes it; pair with `-amfipassbeta` on Tahoe. | [acidanthera/AMFIPass](https://github.com/acidanthera/AMFIPass/releases) |
 
 ---
 
@@ -22,9 +22,9 @@ This document lists the required and recommended third-party OpenCore kernel ext
 
 | Kext / Bundle | Purpose | Source / Download |
 | :--- | :--- | :--- |
-| **PhxBringup.kext** | OpenCore EFI kext (in `EFI/OC/Kexts/`). Initializes AMD Phoenix/Hawk Point silicon, PSP 13.0.4 firmware, MES v11 scheduler, and GPUVM 4-level page tables. | [Releases](https://github.com/luuumi-dev/nullarc/releases) or build via `make` |
-| **PhxAccel.kext** | Auxiliary Kernel Collection (`/Library/Extensions/`). Provides `PhxAMDFB` native framebuffer and `PhxAGDC` display control. | [Releases](https://github.com/luuumi-dev/nullarc/releases) |
-| **NVMTLDriver.bundle** | Metal-over-Vulkan translation runtime + Mesa RADV (`/Library/GPUBundles/`). | [Releases](https://github.com/luuumi-dev/nullarc/releases) |
+| **PhxBringup.kext** | OpenCore EFI kext (`EFI/OC/Kexts/`, needs `phxdebug=1`). Loads the GPU firmware through the PSP, powers up GFX, runs the MES scheduler and per-process GPUVM. | [Releases](https://github.com/luuumi-dev/nullarc/releases) or `src/phxbringup/build.sh` |
+| **PhxAccel.kext** | `/Library/Extensions`, built into the Auxiliary kernel collection by the installer. The `NMXAccel` accelerator, the `PhxAMDFB` framebuffer and `PhxAGDC` display control. | [Releases](https://github.com/luuumi-dev/nullarc/releases) |
+| **NVMTLDriver.bundle** + `nvmtl` | The Metal driver plugin and Mesa RADV, in `/System/Library/CoreServices/CoreTypes.bundle/Contents/Library/PhxGPU` (linked from `/Library/GPUBundles`). | [Releases](https://github.com/luuumi-dev/nullarc/releases) |
 
 ---
 
@@ -32,7 +32,7 @@ This document lists the required and recommended third-party OpenCore kernel ext
 
 | Kext | Purpose | Official Release Repository |
 | :--- | :--- | :--- |
-| **AppleALC.kext** | High-definition audio patching (layout-id configured in `boot-args` / `DeviceProperties`). | [acidanthera/AppleALC](https://github.com/acidanthera/AppleALC/releases) |
+| **AppleALC.kext** | Audio codec layouts (`layout-id` in `DeviceProperties`). macOS Tahoe no longer ships `AppleHDA.kext`, so analog audio also needs it restored (for example with OpenCore Legacy Patcher); nullarc does not ship it. | [acidanthera/AppleALC](https://github.com/acidanthera/AppleALC/releases) |
 | **VoodooI2C.kext** | I2C bus driver for modern laptop trackpads and touchscreens. | [VoodooI2C/VoodooI2C](https://github.com/VoodooI2C/VoodooI2C/releases) |
 | **VoodooI2CHID.kext** | Satellite driver for I2C HID precision trackpads (multitouch gestures). | [VoodooI2C/VoodooI2C](https://github.com/VoodooI2C/VoodooI2C/releases) |
 | **BrightnessKeys.kext** | Automatic handling of ACPI brightness keys (F-keys). | [acidanthera/BrightnessKeys](https://github.com/acidanthera/BrightnessKeys/releases) |
@@ -45,7 +45,7 @@ This document lists the required and recommended third-party OpenCore kernel ext
 | Kext | Target Hardware | Official Release Repository |
 | :--- | :--- | :--- |
 | **AirportItlwm.kext** / **itlwm.kext** | Intel Wi-Fi cards (e.g. AX200 / AX210). | [OpenIntelWireless/itlwm](https://github.com/OpenIntelWireless/itlwm/releases) |
-| **IntelBluetoothFirmware.kext** | Intel Bluetooth adapters. | [OpenIntelWireless/IntelBluetoothFirmware](https://github.com/OpenIntelWireless/IntelBluetoothFirmware/releases) |
+| **IntelBluetoothFirmware.kext** + **IntelBTPatcher.kext** | Intel Bluetooth adapters. On Tahoe use a build with Tahoe support (2.5.1 or newer, e.g. [lshbluesky/IntelBluetoothFirmware](https://github.com/lshbluesky/IntelBluetoothFirmware/releases)) together with `BlueToolFixup.kext` from BrcmPatchRAM. | [OpenIntelWireless/IntelBluetoothFirmware](https://github.com/OpenIntelWireless/IntelBluetoothFirmware/releases) |
 | **LucyRTL8125Ethernet.kext** | Realtek 2.5GbE Ethernet controllers. | [Mieze/LucyRTL8125Ethernet](https://github.com/Mieze/LucyRTL8125Ethernet/releases) |
 
 ---

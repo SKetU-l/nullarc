@@ -58,7 +58,7 @@
       "part_number": "113-PHXGENERIC-001",
       "version": "VER022.012.000.029.000001",
       "type": "ATOMBIOSBK-AMD",
-      "rom_file": "hardware/dumps/firebat_u6c/vbios_1002_1900.rom"
+      "rom_file": null
     }
   }
 }

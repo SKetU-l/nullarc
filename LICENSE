@@ -1,58 +1,31 @@
-# Licenses & Attribution
+# nullarc — licenses
 
-This repository contains code with different open-source and noncommercial licenses depending on the component.
+nullarc combines code under several licenses. Each part below names its license; the full texts are in
+[`LICENSES/`](LICENSES). [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) lists the third-party components that the
+release packages carry, with their notices and where their source is.
 
----
+| Part | License |
+|---|---|
+| `src/phxbringup`, `tools/phxctl`, `tools/*` and the rest of the code written for nullarc, unless a file says otherwise | MIT ([`LICENSES/MIT.txt`](LICENSES/MIT.txt)), or at your option GPL-2.0-only ([`LICENSES/GPL-2.0-only.txt`](LICENSES/GPL-2.0-only.txt)) |
+| `src/phxaccel`, `src/nmplugin`, `tools/nvmtl-patches` — derived from NullMoth's macOS driver | PolyForm Noncommercial 1.0.0 ([`LICENSES/PolyForm-Noncommercial-1.0.0.txt`](LICENSES/PolyForm-Noncommercial-1.0.0.txt)) |
+| `mesa-patches-phoenix` | MIT, as Mesa |
+| Files taken from Linux `amdgpu` (`tools/phxctl/mes_v11_api_def.h`, `tools/phxctl/csb_gfx11.h`) | MIT, © Advanced Micro Devices, Inc. (notice in each file) |
+| `assets/brand` — the nullarc name, mark and wordmark | © luuumi-dev, all rights reserved; they may be used to refer to this project, not for other products |
 
-## 1. Core Kernel Driver & Utilities (`PhxBringup.kext`, `phxctl`)
+## PolyForm Noncommercial
 
-The core silicon bringup driver (`PhxBringup.kext`), registers, IP discovery, and command submission logic are licensed under the **GNU General Public License v2.0** (GPL-2.0-only) or MIT License, compatible with the upstream Linux `amdgpu` driver components they interface with.
-
-Copyright (c) 2026 luuumi-dev and contributors.
-
----
-
-## 2. Accelerator, Display Controller and Metal plugin (`src/phxaccel`, `src/nmplugin`)
-
-The `PhxAccel` kernel extension, framebuffer interface (`PhxAMDFB`), display timing controller (`PhxAGDC`), and the `NVMTLDriver` Metal plugin (`src/nmplugin`, `tools/nvmtl-patches`) are derived from NullMoth's driver architecture and are licensed under the **PolyForm Noncommercial License 1.0.0**.
-
-**Required Notice:**
-```
-NullMoth NVIDIA driver for macOS
-Copyright (c) 2026 NullMoth Systems.
-SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
-```
-
-> **Commercial Use Prohibited:** Under the terms of the PolyForm Noncommercial License 1.0.0, you may not use this software for any commercial purpose (any purpose intended for or directed towards commercial advantage or monetary compensation).
-
-Full text of the PolyForm Noncommercial License 1.0.0:
-https://polyformproject.org/licenses/noncommercial/1.0.0/
-
----
-
-## 3. Mesa RADV Patches (`mesa-patches-phoenix`)
-
-All patches to the Mesa 3-D Graphics Library (`mesa-patches-phoenix`) remain licensed under the original **MIT License**:
+The parts derived from NullMoth may be used, changed and shared **for noncommercial purposes only**. Anyone who
+receives them must also receive the license terms and this line, which the licensor provided with the software:
 
 ```
-Copyright (C) 1999-2007  Brian Paul   All Rights Reserved.
-Copyright (c) 2026 Mesa / RADV contributors.
-
-Permission is hereby granted, free of charge, to any person obtaining a
-copy of this software and associated documentation files (the "Software"),
-to deal in the Software without restriction, including without limitation
-the rights to use, copy, modify, merge, publish, distribute, sublicense,
-and/or sell copies of the Software, and to permit persons to whom the
-Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included
-in all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
-OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
-THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
+Required Notice: Copyright (c) 2026 NullMoth Systems (https://nullmothsystems.com)
 ```
+
+## What the release packages add
+
+The release archives also contain binaries built from other projects: Mesa RADV (MIT), the NullMoth shader translator
+`libnvmtl_translate.dylib` (LGPL-3.0-or-later, from metal2vulkan), LLVM and zstd libraries inside the plugin bundle
+(Apache-2.0 WITH LLVM-exception, BSD), and AMD GPU microcode from linux-firmware (`LICENSE.amdgpu`: redistribution in
+binary form only, no reverse engineering). See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
+Nothing from Apple is redistributed: macOS components the driver needs at run time come from the user's own system.

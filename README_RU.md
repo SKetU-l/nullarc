@@ -60,27 +60,19 @@ flowchart TD
 | `libvulkan_radeon.dylib` | `PhxGPU/nvmtl` | Mesa + [`mesa-patches-phoenix`](mesa-patches-phoenix) | RADV для gfx1103 с винсисом Darwin. |
 | `phxboot` | LaunchDaemon `local.phxboot` | [`tools/phxctl/phxboot.sh`](tools/phxctl/phxboot.sh) | Поднимает GPU при загрузке до того, как WindowServer откроет панель. При сбое откатывается на фреймбуфер прошивки. |
 
-`libnvmtl_translate.dylib` (Metal AIR → SPIR-V) идёт готовым в составе плагина NullMoth и из этого репозитория не
-собирается. Префикс `NVMTL` тоже от NullMoth: к драйверам NVIDIA всё это отношения не имеет.
+`libnvmtl_translate.dylib` (Metal AIR → SPIR-V, LGPL-3.0, на основе metal2vulkan) идёт готовым в составе плагина
+NullMoth; его исходник приложен к каждому релизу. Префикс `NVMTL` тоже от NullMoth: к драйверам NVIDIA всё это отношения не имеет.
 
 ## Установка
 
-Установщика в один шаг пока нет. Эталонная машина настроена вручную скриптами из [`tools/phxctl`](tools/phxctl):
-
-1. OpenCore с `PhxBringup.kext`, SIP частично выключен (`csr-active-config` `0x87f`), boot-args
-   `amfi=0x80 amfi_get_out_of_my_way=0x1 -amfipassbeta ipc_control_port_options=0 revpatch=cpuname,sbvmm`
-   (`phxdebug=1` дополнительно включает отладочный интерфейс `phxctl`).
-2. `inst_m2.sh`: `PhxAccel.kext` в Auxiliary kernel collection и плагин на место.
-3. `relocate_gpubundle.sh`: плагин и RADV в `PhxGPU`, откуда их могут загружать песочные GPU-процессы.
-4. `local.phxboot.plist` + `phxboot.sh`: запуск GPU при загрузке.
-
-Включите автоматический вход: окно входа может оказаться чёрным.
+Скачайте `nullarc-<версия>.zip` со [страницы релизов](https://github.com/luuumi-dev/nullarc/releases) и следуйте
+**[docs/INSTALL_RU.md](docs/INSTALL_RU.md)**. Коротко: добавить `PhxBringup.kext` и boot-args в OpenCore,
+перезагрузиться, запустить `sudo ./install.sh --windowserver` из папки релиза, перезагрузиться дважды.
 
 > [!WARNING]
 > WindowServer загружает драйвер с ad-hoc подписью только при ослабленном AMFI (`amfi=0x80`, `amfi_get_out_of_my_way=0x1`).
-> Это выключает проверку библиотек во всей системе, перестаёт работать FairPlay (Apple TV+, Netflix в Safari),
-> обновления по воздуху могут не ставиться. Чтобы вернуть как было: удалите плагин из `PhxGPU` и `/Library/GPUBundles`,
-> пересоберите Auxiliary kernel collection без `PhxAccel.kext`, уберите `PhxBringup.kext` из OpenCore и затем boot-args AMFI.
+> Это выключает проверку библиотек во всей системе, перестаёт работать FairPlay (Apple TV+, Netflix в Safari).
+> `uninstall.sh` и последний раздел инструкции возвращают всё как было.
 
 ## Сборка
 
@@ -116,11 +108,11 @@ make test
 
 ## Лицензии и благодарности
 
-Действует несколько лицензий, см. [LICENSE](LICENSE).
+Действует несколько лицензий, см. [LICENSE](LICENSE), [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) и [LICENSES/](LICENSES).
 
-- `src/phxbringup`, `tools/phxctl`: GPL-2.0-only или MIT, по образцу Linux `amdgpu`.
+- Код, написанный для nullarc (`src/phxbringup`, `tools/phxctl`, …): MIT или, на ваш выбор, GPL-2.0-only.
 - `src/phxaccel`, `src/nmplugin`, `tools/nvmtl-patches`: производные от драйвера NullMoth для macOS, **PolyForm Noncommercial 1.0.0** — без коммерческого использования.
-- `mesa-patches-phoenix`: MIT, авторские права Mesa сохранены.
+- `mesa-patches-phoenix`: MIT, как Mesa. В пакетах релиза есть также LGPL-3.0 (транслятор шейдеров), LLVM и прошивки AMD; см. уведомления.
 
 Основано на работе команды Linux `amdgpu`, Mesa, NullMoth, [Cobalt64](https://cobalt64.com),
 [Acidanthera](https://github.com/acidanthera) и сообщества AMD-OSX.

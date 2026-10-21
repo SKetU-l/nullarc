@@ -31,3 +31,7 @@ reference/
 # ACPI MSDM carries the Windows product key: never commit it
 MSDM.bin
 MSDM.dsl
+
+# Firmware images (VBIOS, ACPI VFCT carrying it) are AMD/OEM copyright with no redistribution grant
+*.rom
+VFCT.bin
