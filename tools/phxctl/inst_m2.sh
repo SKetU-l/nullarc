@@ -20,5 +20,5 @@ cp /Users/Shared/gpu/nmplugin/NVMTLDriver $B/NVMTLDriver && chown root:wheel $B/
 codesign --force --sign - /Library/GPUBundles/NVMTLDriver.bundle 2>&1 | tail -1
 codesign --verify --strict /Library/GPUBundles/NVMTLDriver.bundle && echo "plugin replaced (patched build), signature ok"
 # every app keeps Metal (phxboot writes the same list at boot): an apps-only list here left new apps without a device
-printf '# PhxAccel M2: Metal for every app; WindowServer composites on the 780M once armed (debug.nvaccelfb)\n*\n!WindowServer\n' > /Library/GPUBundles/nvmtl-allow.txt
+printf '# PhxAccel M2: Metal for every app; WindowServer composites on the 780M once armed (debug.nvaccelfb)\n-iconservicesagent\n*\n!WindowServer\n' > /Library/GPUBundles/nvmtl-allow.txt
 chmod 644 /Library/GPUBundles/nvmtl-allow.txt && cat /Library/GPUBundles/nvmtl-allow.txt

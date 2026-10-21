@@ -13,8 +13,12 @@ exec >>"$LOG" 2>&1
 echo "== $(date '+%F %T') phxboot"
 release() { sysctl -w debug.phxfb_hold=0 >/dev/null 2>&1; }
 apps_only() { printf '# phxboot: Metal for the built-in test tools only\n' > $ALLOW; }
-# every process gets the Metal device; WindowServer too once the accelerator is armed (NullMoth's own default list)
-all_apps() { { printf '# phxboot: Metal for every app%s\n*\n' "$1"; [ -z "$2" ] || printf '%s\n' "$2"; } > $ALLOW; }
+# every process gets the Metal device; WindowServer too once the accelerator is armed (NullMoth's own default list).
+# Denied ("-name", before "*"): iconservicesagent, whose RenderBox drawing of Tahoe's layered icons comes out as flat
+# yellow/green squares on the plugin (2026-10-21); it renders them on the CPU instead, as before it reached the GPU.
+DENY="iconservicesagent"
+all_apps() { { printf '# phxboot: Metal for every app%s\n' "$1"; for d in $DENY; do printf -- '-%s\n' "$d"; done
+               printf '*\n'; [ -z "$2" ] || printf '%s\n' "$2"; } > $ALLOW; }
 # PhxAMDFB without the arming leaves the panel black: give up on M2 (until $G/phxboot-m2 is put back) and reboot into
 # the firmware framebuffer
 m2_fail() {
