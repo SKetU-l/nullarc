@@ -7,10 +7,13 @@
 #pragma once
 #include <libkern/c++/OSObject.h>
 #include <IOKit/IOService.h>
-typedef unsigned int IOAccelStereoMode;
-typedef unsigned int eDoSwap;
-typedef unsigned int eIOAccelSurfaceShapeBits;
-typedef unsigned int eLockType;
+// These are distinct enum types in IOAcceleratorFamily2's C++ ABI.  Keeping
+// them as integer typedefs produces legacy `j` parameter manglings instead of
+// the named enum symbols exported by Sequoia.
+enum IOAccelStereoMode : unsigned int {};
+enum eDoSwap : unsigned int {};
+enum eIOAccelSurfaceShapeBits : unsigned int {};
+enum eLockType : unsigned int {};
 class IOAccelAllocationInfo;
 class IOAccelBounds;
 class IOAccelChannel2;
@@ -22,6 +25,8 @@ class IOAccelContextConfig;
 class IOAccelContextGetDataBufferIn;
 class IOAccelContextGetDataBufferOut;
 class IOAccelDeviceRegion;
+class IOAccelDrawable2;
+struct IOAccel2DBlitRectStruc;
 class IOAccelDisplayPipeScaler;
 class IOAccelDisplayPipeTransaction2;
 class IOAccelEvent;

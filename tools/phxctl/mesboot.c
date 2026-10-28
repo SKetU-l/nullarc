@@ -9,6 +9,7 @@
 #include <stddef.h>
 #include <unistd.h>
 #include "mes_v11_api_def.h"
+#include "phx_layout.h"
 
 #define UC_TYPE 0x4E34384Eu
 #define SEL_HELLO 0
@@ -19,6 +20,8 @@
 #define SEL_DBG_DOORBELL 110
 #define SEL_DBG_SYSMEM 111
 #define SEL_DBG_ADOPTQ 112
+#define SEL_DBG_CLAIM 113
+#define SEL_DBG_LAYOUT 114
 
 static io_connect_t conn;
 
@@ -27,32 +30,48 @@ static int open_kext(void)
    io_service_t svc = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("PhxBringup"));
    if (!svc) { fprintf(stderr, "no PhxBringup\n"); return -1; }
    kern_return_t kr = IOServiceOpen(svc, mach_task_self(), UC_TYPE, &conn);
+   IOObjectRelease(svc);
    uint64_t hin[2] = {1, 0}, hout[4]; uint32_t hn = 4;
    if (kr == 0) kr = IOConnectCallScalarMethod(conn, SEL_HELLO, hin, 2, hout, &hn);
    if (kr) { fprintf(stderr, "open: 0x%x\n", kr); return -1; }
    return 0;
 }
+// Continuing after a failed debug I/O can validate stale scratch/fence values
+// or leave half-programmed page tables. Abort this bring-up process immediately;
+// full.sh propagates the failure and leaves its recovery watchdog armed.
+static void require_io(const char *operation, kern_return_t kr, int complete)
+{
+   if (!kr && complete) return;
+   fprintf(stderr, "%s failed: kr=0x%x%s\n", operation, kr, complete ? "" : " (short reply)");
+   IOServiceClose(conn);
+   exit(1);
+}
 static uint32_t rd(uint32_t reg)
 {
    uint64_t in[3] = {reg, 1, 0xFFFFFFFFull}; uint32_t v = 0; size_t sz = 4;
-   IOConnectCallMethod(conn, SEL_READREGS, in, 3, NULL, 0, NULL, NULL, &v, &sz);
+   kern_return_t kr = IOConnectCallMethod(conn, SEL_READREGS, in, 3, NULL, 0, NULL, NULL, &v, &sz);
+   require_io("register read", kr, sz == sizeof(v));
    return v;
 }
 static uint32_t wr(uint32_t reg, uint32_t val)
 {
    uint64_t in[2] = {reg, val}, out[1] = {0}; uint32_t n = 1;
-   IOConnectCallScalarMethod(conn, SEL_DBG_WRITE_REG, in, 2, out, &n);
+   kern_return_t kr = IOConnectCallScalarMethod(conn, SEL_DBG_WRITE_REG, in, 2, out, &n);
+   require_io("register write", kr, n == 1);
    return (uint32_t)out[0];
 }
 static kern_return_t db(uint64_t byteOff, uint64_t v)
 {
    uint64_t in[3] = {byteOff, v & 0xffffffffu, v >> 32};
-   return IOConnectCallScalarMethod(conn, SEL_DBG_DOORBELL, in, 3, NULL, NULL);
+   kern_return_t kr = IOConnectCallScalarMethod(conn, SEL_DBG_DOORBELL, in, 3, NULL, NULL);
+   require_io("doorbell write", kr, 1);
+   return kr;
 }
 static kern_return_t sm(uint64_t op, uint64_t a, uint64_t b, uint64_t *o0, uint64_t *o1)
 {
    uint64_t in[3] = {op, a, b}, out[2] = {0, 0}; uint32_t n = 2;
    kern_return_t kr = IOConnectCallScalarMethod(conn, SEL_DBG_SYSMEM, in, 3, out, &n);
+   require_io("system memory I/O", kr, n == 2);
    if (o0) *o0 = out[0];
    if (o1) *o1 = out[1];
    return kr;
@@ -60,21 +79,22 @@ static kern_return_t sm(uint64_t op, uint64_t a, uint64_t b, uint64_t *o0, uint6
 static void vw(uint64_t off, uint32_t v)
 {
    uint64_t in[2] = {off, v};
-   IOConnectCallScalarMethod(conn, SEL_DBG_VRAM_WRITE, in, 2, NULL, NULL);
+   kern_return_t kr = IOConnectCallScalarMethod(conn, SEL_DBG_VRAM_WRITE, in, 2, NULL, NULL);
+   require_io("VRAM write", kr, 1);
 }
 static uint32_t vr(uint64_t off)
 {
    uint64_t in[2] = {off, 4}; uint32_t buf[4] = {0}; size_t sz = sizeof(buf);
-   IOConnectCallMethod(conn, SEL_DBG_VRAM_READ, in, 2, NULL, 0, NULL, NULL, buf, &sz);
+   kern_return_t kr = IOConnectCallMethod(conn, SEL_DBG_VRAM_READ, in, 2, NULL, 0, NULL, NULL, buf, &sz);
+   require_io("VRAM read", kr, sz == sizeof(buf));
    return buf[0];
 }
 
 
-#define VRAM_MC 0x8000000000ull          // MC address of VRAM offset 0
 #define GART_VA 0x7FFF00000000ull            // VA = GART_VA + vram offset (first 128 MiB)
 #define GART_PT 0x2400000ull             // flat PTE table (VRAM offset)
 #define GART_N 32768
-#define FB_PA 0x6A0000000ull             // GCMC_VM_FB_OFFSET << 24
+#define DEFAULT_PAGE 0x23ff000ull        // valid zero page immediately below the flat page table
 
 #define SEG0(o) (0x1260u + (o))
 #define SEG1(o) (0xA000u + (o))
@@ -91,24 +111,56 @@ static uint32_t vr(uint64_t off)
 
 static int env_on(const char *n) { const char *v = getenv(n); return v && *v && *v != '0'; }
 static int use_mc;
-#define VA(off) ((use_mc ? VRAM_MC : GART_VA) + (off))
-#define MC(off) (VRAM_MC + (off))
+static struct phx_layout layout;
+#define VA(off) ((use_mc ? layout.vram_mc : GART_VA) + (off))
+#define MC(off) (layout.vram_mc + (off))
 
-static void gart(void)
+static int init_layout(void)
+{
+   uint64_t out[4] = {0, 0, 0, 0};
+   uint32_t n = 4;
+   kern_return_t kr = IOConnectCallScalarMethod(conn, SEL_DBG_LAYOUT, NULL, 0, out, &n);
+   if (kr || n != 4) {
+      fprintf(stderr, "layout query failed: 0x%x\n", kr);
+      return -1;
+   }
+   layout.vram_mc = out[0];
+   layout.vram_size = out[1];
+   layout.vram_pa = out[2];
+   layout.bar0_size = out[3];
+   if (phx_layout_validate(&layout)) {
+      fprintf(stderr, "unsafe GPU layout: MC 0x%llx size 0x%llx PA 0x%llx BAR0 0x%llx\n",
+              (unsigned long long)layout.vram_mc, (unsigned long long)layout.vram_size,
+              (unsigned long long)layout.vram_pa, (unsigned long long)layout.bar0_size);
+      return -1;
+   }
+   printf("layout: MC 0x%llx-0x%llx, system 0x%llx, BAR0 %llu MiB\n",
+          (unsigned long long)layout.vram_mc,
+          (unsigned long long)(layout.vram_mc + layout.vram_size - 1),
+          (unsigned long long)layout.vram_pa, (unsigned long long)(layout.bar0_size >> 20));
+   return 0;
+}
+
+static int gart(void)
 {
    for (uint64_t i = 0; i < GART_N; i++) {
-      uint64_t pte = (FB_PA + i * 4096) | ((getenv("PTE_SYS") && *getenv("PTE_SYS")) ? 0x77 : 0x71);      // VALID | EXEC | READ | WRITE, local FB
+      uint64_t pte = (layout.vram_pa + i * 4096) | ((getenv("PTE_SYS") && *getenv("PTE_SYS")) ? 0x77 : 0x71);      // VALID | EXEC | READ | WRITE, local FB
       vw(GART_PT + i * 8, (uint32_t)pte);
       vw(GART_PT + i * 8 + 4, (uint32_t)(pte >> 32));
    }
    wr(SEG0(0x1713), (uint32_t)(GART_VA >> 12)); wr(SEG0(0x1714), (uint32_t)(GART_VA >> 44));
    wr(SEG0(0x1733), (uint32_t)((GART_VA + (uint64_t)GART_N * 4096 - 1) >> 12)); wr(SEG0(0x1734), (uint32_t)((GART_VA + (uint64_t)GART_N * 4096 - 1) >> 44));
-   wr(SEG0(0x16f3), (uint32_t)((FB_PA + GART_PT) | 1)); wr(SEG0(0x16f4), (uint32_t)((FB_PA + GART_PT) >> 32));   // PDB base = physical (FB_PA + vram offset), as the Linux trace
+   uint64_t pt_pa = layout.vram_pa + GART_PT;
+   wr(SEG0(0x16f3), (uint32_t)(pt_pa | 1)); wr(SEG0(0x16f4), (uint32_t)(pt_pa >> 32));
    // system aperture / AGP / defaults exactly as the Linux trace (gfxhub_v3_0_init_system_aperture_regs)
    wr(SEG0(0x167c), 0); wr(SEG0(0x167b), 0x00ffffff); wr(SEG0(0x167a), 0);      // AGP_BASE/BOT/TOP (AGP off)
-   wr(SEG0(0x167d), 0x00200000); wr(SEG0(0x167e), 0x00205fff);                  // SYSTEM_APERTURE LOW/HIGH = VRAM MC range
-   wr(SEG0(0x15a8), 0x006a0f9f); wr(SEG0(0x15a9), 0);                           // SYSTEM_APERTURE_DEFAULT_ADDR LSB/MSB
-   wr(SEG0(0x15cb), 0x0000a23c); wr(SEG0(0x15cc), 0);                           // L2 protection fault default addr
+   wr(SEG0(0x167d), phx_system_aperture_low(&layout));
+   wr(SEG0(0x167e), phx_system_aperture_high(&layout));
+   for (uint32_t i = 0; i < 4096; i += 4)
+      vw(DEFAULT_PAGE + i, 0);
+   uint64_t default_pa = layout.vram_pa + DEFAULT_PAGE;
+   wr(SEG0(0x15a8), (uint32_t)(default_pa >> 12)); wr(SEG0(0x15a9), (uint32_t)(default_pa >> 44));
+   wr(SEG0(0x15cb), (uint32_t)(default_pa >> 12)); wr(SEG0(0x15cc), (uint32_t)(default_pa >> 44));
    wr(SEG0(0x15c5), 0x00060000);                                                // L2_PROTECTION_FAULT_CNTL2
    wr(SEG0(0x15c4), env_on("FAULT_DEFAULT") ? 0x3ffffffc : 0x00000002);   // debug: no default-page redirect so faults are recorded                                                // L2_PROTECTION_FAULT_CNTL (fault handling on; was missing -> silent drops)
    wr(SEG0(0x15ce), 0xffffffff); wr(SEG0(0x15cf), 0x0000000f); wr(SEG0(0x15d0), 0);  // identity aperture LOW/HIGH (disabled)
@@ -138,13 +190,15 @@ static void gart(void)
    wr(SEG0(0x1e1f), rd(SEG0(0x1e1f)) | 0x8000);   // CP_DEBUG.CPG_UTCL1_ERROR_HALT_DISABLE (linux sets it with the gfxhub)
    wr(SEG0(0x16ab + 17), 0x00F80001);          // GCVM_INVALIDATE_ENG17_REQ (the engine amdgpu uses for gmc flushes)
    usleep(2000);
-   printf("gart: ack17=0x%x ctx0=0x%x\n", rd(SEG0(0x16bd + 17)), rd(SEG0(0x1688)));
+   uint32_t ack = rd(SEG0(0x16bd + 17)), ctx0 = rd(SEG0(0x1688));
+   printf("gart: ack17=0x%x ctx0=0x%x default-pa=0x%llx\n", ack, ctx0, (unsigned long long)default_pa);
+   return !(ack & 1) || !(ctx0 & 1);
 }
 static void grbm_select(uint32_t me, uint32_t pipe, uint32_t queue, uint32_t vmid)
 {
    wr(SEG1(0x900), pipe | (me << 2) | (vmid << 4) | (queue << 8));
 }
-static void mes_start(void)
+static int mes_start(void)
 {
    // uc start from fw headers: lo=0xF0005000? taken from the header words (same for sched + kiq)
    const uint64_t uc = 0xFFFFFFFFF0005000ull >> 2;
@@ -157,7 +211,9 @@ static void mes_start(void)
    grbm_select(0, 0, 0, 0);
    wr(SEG1(0x2807), (1u << 26) | (1u << 27));                // PIPE0/1 ACTIVE
    usleep(2000);
-   printf("mes: CP_MES_CNTL=0x%x\n", rd(SEG1(0x2807)));
+   uint32_t cntl = rd(SEG1(0x2807));
+   printf("mes: CP_MES_CNTL=0x%x\n", cntl);
+   return (cntl & ((1u << 26) | (1u << 27))) != ((1u << 26) | (1u << 27));
 }
 static void mqd_build(uint64_t mqd, uint64_t ring, uint64_t wb, uint64_t eop, int doorbell, uint32_t db_index)
 {
@@ -330,8 +386,8 @@ static int mes_submit(void *pkt, size_t size, size_t api_status_off, const char 
 #define CMP_MQD  0x2542000ull
 #define CMP_EOP  0x2543000ull
 static void vm8_test(void);
-static void gfx_via_mes(void);
-static void compute_via_mes(void)
+static int gfx_via_mes(void);
+static int compute_via_mes(void)
 {
    for (int i = 0; i < 1024; i++) vw(CMP_RING + i * 4, 0);
    for (int i = 0; i < 32; i++) vw(CMP_WB + i * 4, 0);
@@ -348,7 +404,7 @@ static void compute_via_mes(void)
    a.wptr_addr = VA(CMP_WB + 16);
    a.queue_type = MES_QUEUE_TYPE_COMPUTE;
    a.map_legacy_kq = 1;
-   if (mes_submit(&a, sizeof(a), offsetof(union MESAPI__ADD_QUEUE, api_status), "ADD_QUEUE(compute, map_legacy_kq)")) return;
+   if (mes_submit(&a, sizeof(a), offsetof(union MESAPI__ADD_QUEUE, api_status), "ADD_QUEUE(compute, map_legacy_kq)")) return 1;
    wr(SEG1(0x2040), 0xCAFEDEAD);
    vw(CMP_RING + 0, 0xC0017900); vw(CMP_RING + 4, 0x40); vw(CMP_RING + 8, 0xDEADBEEF);
    vw(CMP_RING + 12, 0xC0033700); vw(CMP_RING + 16, 0x00100500);
@@ -357,21 +413,23 @@ static void compute_via_mes(void)
    db(6 * 4, 8);
    for (int i = 0; i < 50; i++) { usleep(10000); if (rd(SEG1(0x2040)) == 0xDEADBEEF && vr(TESTBUF) == 0xFEEDF00D) break; }
    grbm_select(1, 0, 0, 0);
-   printf("compute: scratch0=0x%08x (want deadbeef) testbuf=0x%08x (want feedf00d) hqd_active=%u rptr=%u\n", rd(SEG1(0x2040)), vr(TESTBUF), rd(SEG0(0x1fab)), rd(SEG0(0x1fb3)));
+   uint32_t scratch = rd(SEG1(0x2040)), test = vr(TESTBUF);
+   printf("compute: scratch0=0x%08x (want deadbeef) testbuf=0x%08x (want feedf00d) hqd_active=%u rptr=%u\n", scratch, test, rd(SEG0(0x1fab)), rd(SEG0(0x1fb3)));
    grbm_select(0, 0, 0, 0);
+   if (scratch != 0xDEADBEEF || test != 0xFEEDF00D) return 1;
    if (env_on("ADOPT")) {   // hand the working compute queue to the kext: SUBMIT from RADV goes here from now on
       uint64_t in[6] = {CMP_RING, 1024, CMP_WB, 6 * 4, 8, 0x2550000};
       kern_return_t kr = IOConnectCallScalarMethod(conn, SEL_DBG_ADOPTQ, in, 6, NULL, NULL);
       printf("adopt queue -> kr 0x%x\n", kr);
-      return;
+      return kr != 0;
    }
-   if (env_on("VM8")) { vm8_test(); return; }
+   if (env_on("VM8")) { vm8_test(); return 0; }
    if (getenv("MESBOOT_VMT") && *getenv("MESBOOT_VMT")) {
       // GPU write into SYSTEM memory through a context0 (GART) mapping, PTE SYSTEM|SNOOPED
-      uint64_t phys = 0, len = 0, val = 0;
+      uint64_t phys = 0, len = 0;
       kern_return_t kr = sm(1, 1 << 20, 0, &phys, &len);
       printf("sysmem alloc kr=0x%x phys=0x%llx len=0x%llx\n", kr, (unsigned long long)phys, (unsigned long long)len);
-      if (kr) return;
+      if (kr) return 1;
       if (env_on("AGPTEST")) {   // can the GPU write system memory at all? identity AGP aperture MC==physical, no page tables
          wr(SEG0(0x167c), 0); wr(SEG0(0x167b), 0); wr(SEG0(0x167a), 0x000001ff);       // AGP BASE=0, BOT=0, TOP=0x1ff (8 GiB, 16 MiB units)
          if (env_on("CTX0_OFF")) { wr(SEG0(0x1688), 0x01fffe00); wr(SEG0(0x16ab + 17), 0x00F80001); usleep(2000); }   // MMHUB-like: no context0 translation
@@ -401,13 +459,13 @@ static void compute_via_mes(void)
          }
          uint64_t pp, v = 0; sm(2, 0x80000ull + 0x2000, 0, &pp, &v);
          printf("AGP identity write to system memory phys 0x%llx: value=0x%08x (want a6a6a6a6)\n", (unsigned long long)tgt, (uint32_t)v);
-         return;
+         return 0;
       }
       const uint64_t vaoff = 0x7F00000;
       const int vram_t = getenv("MESBOOT_VMT")[0] == '2';
       const int pt_sys = getenv("PT_SYS") && *getenv("PT_SYS") == '1';   // page table itself in system memory
       uint64_t sysphys = phys;
-      if (vram_t) phys = FB_PA + 0x2600000ull;
+      if (vram_t) phys = layout.vram_pa + 0x2600000ull;
       else if (pt_sys) phys = sysphys + 0x80000ull;                      // targets after the table region
       uint32_t wp = 8, hit = 0;
       static const uint64_t lowf[] = {0x77, 0x71, 0x73, 0x75, 0x7f};
@@ -471,6 +529,7 @@ static void compute_via_mes(void)
       }
       printf("system-memory write via GART: %u hits of 25 variants (value=0x%08x)\n", hit, hit ? 0xabcd1234 : 0);
    }
+   return 0;
 }
 
 // VMID 8 user context: 4-level page table in system memory, IB + target in VRAM pages, IB executed from the kernel compute ring
@@ -487,8 +546,8 @@ static void vm8_test(void)
    const int V = 8;
    const int flat = env_on("VM8_FLAT");
    if (flat) {   // depth 0: one flat PTB covering 512 pages from VA_IB, like the working GART
-      PUT(0x0000 + 0 * 8, (FB_PA + IBO) | flags);
-      PUT(0x0000 + 1 * 8, (FB_PA + TGO) | flags);
+      PUT(0x0000 + 0 * 8, (layout.vram_pa + IBO) | flags);
+      PUT(0x0000 + 1 * 8, (layout.vram_pa + TGO) | flags);
       wr(SEG0(0x16f3 + 2 * V), (uint32_t)(T2 | 3)); wr(SEG0(0x16f4 + 2 * V), (uint32_t)(T2 >> 32));
       wr(SEG0(0x1688 + V), 0x01fffe01);
       wr(SEG0(0x1713 + 2 * V), (uint32_t)(VA_IB >> 12)); wr(SEG0(0x1714 + 2 * V), (uint32_t)(VA_IB >> 44));
@@ -498,9 +557,9 @@ static void vm8_test(void)
       PUT(0x1000 + ((VA_IB >> 30) & 0x1ff) * 8, T0 | 7);                     // gmc_v11: translate_further=false -> plain PDE
       PUT(0x2000 + ((VA_IB >> 21) & 0x1ff) * 8, TP | 7);
       if (env_on("VM8_IBSYS")) PUT(0x3000 + ((VA_IB >> 12) & 0x1ff) * 8, (phys + 0x20000) | 0x77 | ((uint64_t)mt << 48));   // IB page in SYSTEM memory
-      else PUT(0x3000 + ((VA_IB >> 12) & 0x1ff) * 8, (FB_PA + IBO) | flags);
+      else PUT(0x3000 + ((VA_IB >> 12) & 0x1ff) * 8, (layout.vram_pa + IBO) | flags);
       if (env_on("VM8_SYS")) PUT(0x3000 + ((VA_T >> 12) & 0x1ff) * 8, (phys + 0x10000) | 0x77 | ((uint64_t)mt << 48));   // target = SYSTEM page
-      else PUT(0x3000 + ((VA_T >> 12) & 0x1ff) * 8, (FB_PA + TGO) | flags);
+      else PUT(0x3000 + ((VA_T >> 12) & 0x1ff) * 8, (layout.vram_pa + TGO) | flags);
       wr(SEG0(0x16f3 + 2 * V), (uint32_t)(T2 | 3)); wr(SEG0(0x16f4 + 2 * V), (uint32_t)(T2 >> 32));
       wr(SEG0(0x1688 + V), 0x01fffe07);
       wr(SEG0(0x1713 + 2 * V), 0); wr(SEG0(0x1714 + 2 * V), 0);
@@ -532,7 +591,8 @@ static void vm8_test(void)
    // RELEASE_MEM fence exactly as the kext emits it -> MC 0x2550000
    vw(0x2550000, 0); vw(0x2550004, 0);
    { const uint64_t fm = MC(0x2550000ull); const uint32_t rm[8] = {0xC0064900, 0x06603514, 0x40000000, (uint32_t)fm, (uint32_t)(fm >> 32), 0x77, 0, 0};
-     for (int i = 0; i < 8; i++) vw(CMP_RING + (b + i) * 4, rm[i]); b += 8; }
+     for (int i = 0; i < 8; i++) vw(CMP_RING + (b + i) * 4, rm[i]);
+     b += 8; }
    vw(CMP_WB + 16, b); vw(CMP_WB + 20, 0); db(6 * 4, b);
    const int tsys = env_on("VM8_SYS");
    uint64_t sv = 0;
@@ -544,7 +604,7 @@ static void vm8_test(void)
    grbm_select(0, 0, 0, 0);
 }
 
-static void sched_test(void)
+static int sched_test(void)
 {
    sched_init();
    union MESAPI_SET_HW_RESOURCES r;
@@ -566,15 +626,17 @@ static void sched_test(void)
    r.disable_reset = 1; r.disable_mes_log = 1; r.use_different_vmid_compute = 1;
    r.enable_reg_active_poll = 1; r.enable_level_process_quantum_check = 1;
    r.oversubscription_timer = 50;
-   mes_submit(&r, sizeof(r), offsetof(union MESAPI_SET_HW_RESOURCES, api_status), "SET_HW_RESOURCES");
+   if (mes_submit(&r, sizeof(r), offsetof(union MESAPI_SET_HW_RESOURCES, api_status), "SET_HW_RESOURCES")) return 1;
    union MESAPI__QUERY_MES_STATUS q;
    memset(&q, 0, sizeof(q));
    q.header.type = MES_API_TYPE_SCHEDULER;
    q.header.opcode = MES_SCH_API_QUERY_SCHEDULER_STATUS;
    q.header.dwsize = API_FRAME_SIZE_IN_DWORDS;
-   mes_submit(&q, sizeof(q), offsetof(union MESAPI__QUERY_MES_STATUS, api_status), "QUERY_SCHED_STATUS");
-   if (env_on("MESBOOT_CS")) compute_via_mes();
-   if (env_on("MESBOOT_GFX")) gfx_via_mes();
+   if (mes_submit(&q, sizeof(q), offsetof(union MESAPI__QUERY_MES_STATUS, api_status), "QUERY_SCHED_STATUS")) return 1;
+   int rc = 0;
+   if (env_on("MESBOOT_CS")) rc |= compute_via_mes();
+   if (env_on("MESBOOT_GFX")) rc |= gfx_via_mes();
+   return rc;
 }
 
 #define MEC_RING 0x2530000ull
@@ -615,7 +677,7 @@ static void mec_test(void)
 #define GFX_CSB  0x2576000ull            // RLC clear-state buffer (RLC_CSIB_*), as gfx_v11_0_init_csb
 #define GFX_DB   0x116u
 #include "csb_gfx11.h"
-static void gfx_via_mes(void)
+static int gfx_via_mes(void)
 {
    for (unsigned i = 0; i < GFX_RDW; i++) vw(GFX_RING + i * 4, 0);
    for (int i = 0; i < 32; i++) vw(GFX_WB + i * 4, 0);
@@ -650,7 +712,7 @@ static void gfx_via_mes(void)
    a.wptr_addr = wpoll;
    a.queue_type = MES_QUEUE_TYPE_GFX;
    a.map_legacy_kq = 1;
-   if (mes_submit(&a, sizeof(a), offsetof(union MESAPI__ADD_QUEUE, api_status), "ADD_QUEUE(gfx, map_legacy_kq)")) return;
+   if (mes_submit(&a, sizeof(a), offsetof(union MESAPI__ADD_QUEUE, api_status), "ADD_QUEUE(gfx, map_legacy_kq)")) return 1;
    grbm_select(0, 0, 0, 0);
    printf("gfx hqd after map: active=%u base=0x%x cntl=0x%08x dbctl=0x%08x rptr=%u\n", rd(SEG0(0x1e80)), rd(SEG0(0x1e86)),
           rd(SEG0(0x1e8f)), rd(SEG0(0x1e8d)), rd(SEG0(0x1e88)));
@@ -665,16 +727,19 @@ static void gfx_via_mes(void)
    db(GFX_DB * 4, w);
    for (int i = 0; i < 50; i++) { usleep(10000); if (rd(SEG1(0x2041)) == 0xDEADBEEF && vr(TESTBUF + 0x40) == 0x6F7A6F7A) break; }
    grbm_select(0, 0, 0, 0);
+   uint32_t scratch = rd(SEG1(0x2041)), test = vr(TESTBUF + 0x40);
    printf("gfx: scratch1=0x%08x (want deadbeef) testbuf=0x%08x (want 6f7a6f7a) rptr=%u rptr_wb=%u grbm=0x%08x cp_stat=0x%08x\n",
-          rd(SEG1(0x2041)), vr(TESTBUF + 0x40), rd(SEG0(0x1e88)), vr(GFX_WB), rd(0x2004), rd(0x21a0));
+          scratch, test, rd(SEG0(0x1e88)), vr(GFX_WB), rd(0x2004), rd(0x21a0));
+   if (scratch != 0xDEADBEEF || test != 0x6F7A6F7A) return 1;
    if (env_on("ADOPT_GFX")) {   // hand the gfx queue to the kext as its second queue
       uint64_t in[6] = {GFX_RING, GFX_RDW, GFX_WB, GFX_DB * 4, w, 0x2580000 | 1};
       kern_return_t kr = IOConnectCallScalarMethod(conn, SEL_DBG_ADOPTQ, in, 6, NULL, NULL);
       printf("adopt gfx queue -> kr 0x%x\n", kr);
+      return kr != 0;
    }
+   return 0;
 }
 
-static void sched_test(void);
 static void kiq_init_only(void)
 {
    uint32_t t = rd(SEG1(0x98a)) & 0xffffff00;
@@ -740,29 +805,32 @@ static void sdma_sys_test(void)
 int main(int argc, char **argv)
 {
    if (open_kext()) return 1;
+   if (init_layout()) return 1;
    if (argc < 2) { fprintf(stderr, "mesboot gart|mes|kiq|all\n"); return 2; }
    int all = !strcmp(argv[1], "all");
    if (getenv("MESBOOT_MC") && *getenv("MESBOOT_MC") == '1') use_mc = 1;
    if (!strcmp(argv[1], "db") && argc >= 4) { printf("db +0x%llx <- %llu kr=0x%x\n", strtoull(argv[2], NULL, 0), strtoull(argv[3], NULL, 0), db(strtoull(argv[2], NULL, 0), strtoull(argv[3], NULL, 0))); return 0; }
    if (!strcmp(argv[1], "dump")) mesdump();
-   if (all || !strcmp(argv[1], "gart")) gart();
-   if (all || !strcmp(argv[1], "mes")) mes_start();
+   if ((all || !strcmp(argv[1], "gart")) && gart()) return 1;
+   if ((all || !strcmp(argv[1], "mes")) && mes_start()) return 1;
    if (!strcmp(argv[1], "kiqdb")) { use_db = 1; kiq_test(); }
-   if (!strcmp(argv[1], "kiqsched")) { kiq_init_only(); sched_test(); }
+   if (!strcmp(argv[1], "kiqsched")) { kiq_init_only(); return sched_test(); }
    if (!strcmp(argv[1], "claim")) {   // GPU is up: let PhxAccel (the Metal accelerator) start on it
       uint64_t in[1] = {1};
-      printf("claim -> kr 0x%x\n", IOConnectCallScalarMethod(conn, 113, in, 1, NULL, NULL));
+      kern_return_t kr = IOConnectCallScalarMethod(conn, SEL_DBG_CLAIM, in, 1, NULL, NULL);
+      printf("claim -> kr 0x%x\n", kr);
+      return kr != 0;
    }
    if (!strcmp(argv[1], "gfx")) {   // MES already running (after kiqsched): continue its ring where the last run left it
       sch_wptr = vr(SCH_WB + 16); sch_seq = vr(SCH_WB + 32);
       printf("sched ring: wptr=%u seq=%llu\n", sch_wptr, (unsigned long long)sch_seq);
-      gfx_via_mes();
+      return gfx_via_mes();
    }
    if (!strcmp(argv[1], "sdmasys")) sdma_sys_test();
    if (!strcmp(argv[1], "kiqreg")) kiqreg_test();
    if (!strcmp(argv[1], "mec")) mec_test();
-   if (!strcmp(argv[1], "sched")) sched_test();
-   if (!strcmp(argv[1], "viakiq")) { use_db = 1; kiq_test(); skip_hqd = 1; sched_test(); }
+   if (!strcmp(argv[1], "sched")) return sched_test();
+   if (!strcmp(argv[1], "viakiq")) { use_db = 1; kiq_test(); skip_hqd = 1; return sched_test(); }
    if (all || !strcmp(argv[1], "kiq")) kiq_test();
    return 0;
 }

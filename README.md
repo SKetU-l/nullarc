@@ -25,6 +25,11 @@
 
 ## Status
 
+**EliteBook / Sequoia branch:** experimental compatibility work for `24H32`.
+Two private surface methods still block packaging and installation. See
+[the ABI evidence and current gate](docs/sequoia-abi-status.md) before using
+this branch; the Tahoe results and installation instructions below are upstream's.
+
 Measured on the reference machine — Firebat U6C, Ryzen 7 H 255, Radeon 780M, 2560×1600 120 Hz eDP, macOS Tahoe 26.6.2 —
 in October 2026:
 

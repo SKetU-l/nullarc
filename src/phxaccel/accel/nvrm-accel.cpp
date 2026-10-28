@@ -42,7 +42,13 @@ static void               nvAccelWriteStamp(int index, unsigned int value);
 #include <libkern/c++/OSSymbol.h>
 #include "nvrm_vram_abi.h"
 #include <IOKit/IODeviceMemory.h>
+#if defined(NM_SEQUOIA) && defined(NM_TAHOE)
+#error Select one private accelerator ABI
+#elif defined(NM_SEQUOIA)
+#include "sequoia_fwd.h"
+#else
 #include "tahoe_fwd.h"   // macOS 26: inherited slots Apple no longer exports, forwarded through its vtables
+#endif
 #include "nvaccel_stubs.h"
 #ifndef NMX_ACCEL
 #include "nvkms-kapi.h"

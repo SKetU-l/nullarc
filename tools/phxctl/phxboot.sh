@@ -46,8 +46,14 @@ ioreg -l | grep -q '"phx-build"' || { [ $M2 = 1 ] && m2_fail "PhxBringup not loa
 echo "PhxAMDFB on the panel: $M2"
 touch "$MARK"; sync
 apps_only
-MC=1 CS=1 ADOPT=1 GFX=1 AG=1 bash $G/full.sh kiqsched | grep -E "^compute:|^gfx:|adopt"
-$G/phxctl/mesboot claim
+if ! (set -o pipefail; MC=1 CS=1 ADOPT=1 GFX=1 AG=1 bash $G/full.sh kiqsched | grep -E "^compute:|^gfx:|adopt"); then
+    echo "GPU bring-up failed; leaving recovery marker and watchdog armed"
+    release; exit 1
+fi
+if ! $G/phxctl/mesboot claim; then
+    echo "accelerator claim failed; leaving recovery marker"
+    release; exit 1
+fi
 # no BO cache flushing per submit/wait (the GPU maps system memory snooped): 41 fps window drag instead of 13, and no
 # artifacts seen (2026-10-20)
 sysctl -w debug.phxbos_flush=0 >/dev/null 2>&1

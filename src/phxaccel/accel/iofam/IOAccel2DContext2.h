@@ -11,8 +11,13 @@ enum { kIOAccel2DContext2Size = 0x1100 };
 class IOAccel2DContext2 : public IOAccelContext2 {
     OSDeclareDefaultStructors(IOAccel2DContext2);
 public:
+#ifdef NM_SEQUOIA
+    virtual void blitCopy(IOAccelEvent*, IOAccelResource2*, IOAccelResource2*, IOAccel2DBlitRectStruc*, unsigned int) = 0;
+    virtual void blitFill(IOAccelEvent*, unsigned int, IOAccelResource2*, IOAccel2DBlitRectStruc*, unsigned int) = 0;
+#else
     virtual void _pure362() = 0;
     virtual void _pure363() = 0;
+#endif
     virtual void _RESERVEDIOAccel2DContext0();
     virtual void _RESERVEDIOAccel2DContext1();
     virtual void _RESERVEDIOAccel2DContext2();

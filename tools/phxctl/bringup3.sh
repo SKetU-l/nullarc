@@ -14,9 +14,10 @@ echo "== watchdog: reboot in 3 min unless cancelled =="
 eval $SUDO_CMD bash -c 'nohup shutdown -r +3 >/dev/null 2>&1 &'
 P psp destroy >/dev/null 2>&1
 P psp create 0x1100000 >/dev/null
+P layout
 P stage ~/gpu/fw/psp_13_0_4_toc.bin 256 2304 0x0 >/dev/null
-P raw 0x20 0x04000000 0x80 0x900 0 0 0 >/dev/null
-P raw 0x5 0x08000000 0x80 0x4000000 0x2 0x0C000000 0x6A >/dev/null
+P toc 0x900 >/dev/null
+P tmr 0x4000000 >/dev/null
 echo "== load firmware =="
 L(){ P loadfw "$@" 2>&1 | grep loadfw >> ~/gpu/fwaddr.log; }
 : > ~/gpu/fwaddr.log

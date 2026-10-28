@@ -160,18 +160,43 @@ class NVGLContext : public IOAccelGLContext2 {
     OSDeclareDefaultStructors(NVGLContext)
     NM_TAHOE_FWD(NVGLContext)
 public:
+#ifdef NM_SEQUOIA
+    void addDrawableToChannel(IOAccelDrawable2*) APPLE_KEXT_OVERRIDE { ALOG("NVGLContext::addDrawableToChannel (stub)"); }
+    void removeDrawableFromChannel(IOAccelDrawable2*) APPLE_KEXT_OVERRIDE { ALOG("NVGLContext::removeDrawableFromChannel (stub)"); }
+    bool setCompatibleSurfaceMode(unsigned long long*, unsigned long long, int) APPLE_KEXT_OVERRIDE {
+        // Apple's implementation returns a bool. This unsupported GL path must
+        // not expose the indeterminate return register of the old void stub.
+        ALOG("NVGLContext::setCompatibleSurfaceMode (unsupported)");
+        return false;
+    }
+    void get_temp_allocation_info(IOAccelDrawable2*, unsigned int* a0, unsigned int* a1) APPLE_KEXT_OVERRIDE {
+        ALOG("NVGLContext::get_temp_allocation_info (stub)");
+        if (a0) *a0 = 0;
+        if (a1) *a1 = 0;
+    }
+#else
     void _pure362() APPLE_KEXT_OVERRIDE { ALOG("NVGLContext::_pure362"); }
     void _pure363() APPLE_KEXT_OVERRIDE { ALOG("NVGLContext::_pure363"); }
     void _pure364() APPLE_KEXT_OVERRIDE { ALOG("NVGLContext::_pure364"); }
     void _pure367() APPLE_KEXT_OVERRIDE { ALOG("NVGLContext::_pure367"); }
+#endif
 };
 OSDefineMetaClassAndStructors(NVGLContext, IOAccelGLContext2)
 class NV2DContext : public IOAccel2DContext2 {
     OSDeclareDefaultStructors(NV2DContext)
     NM_TAHOE_FWD(NV2DContext)
 public:
+#ifdef NM_SEQUOIA
+    void blitCopy(IOAccelEvent*, IOAccelResource2*, IOAccelResource2*, IOAccel2DBlitRectStruc*, unsigned int) APPLE_KEXT_OVERRIDE {
+        ALOG("NV2DContext::blitCopy (stub)");
+    }
+    void blitFill(IOAccelEvent*, unsigned int, IOAccelResource2*, IOAccel2DBlitRectStruc*, unsigned int) APPLE_KEXT_OVERRIDE {
+        ALOG("NV2DContext::blitFill (stub)");
+    }
+#else
     void _pure362() APPLE_KEXT_OVERRIDE { ALOG("NV2DContext::_pure362"); }
     void _pure363() APPLE_KEXT_OVERRIDE { ALOG("NV2DContext::_pure363"); }
+#endif
 };
 OSDefineMetaClassAndStructors(NV2DContext, IOAccel2DContext2)
 class NVCLContext : public IOAccelCLContext2 {

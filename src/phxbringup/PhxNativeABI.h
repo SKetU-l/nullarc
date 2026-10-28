@@ -60,6 +60,7 @@ enum {
     PHXN_SEL_DBG_VRAM_WRITE = 109, /* in: [0] VRAM byte offset (dword-aligned) [1] dword value; writes via BAR0. */
     PHXN_SEL_DBG_ADOPTQ = 112,     /* in: [0] ring VRAM off [1] ring dwords [2] wb VRAM off (wptr shadow at +16) [3] doorbell byte off [4] wptr [5] fence VRAM off | queue (0 compute, 1 gfx) */
     PHXN_SEL_DBG_CLAIM = 113,      /* in: [0] 1 = mark the GPU driven (nmxgpu-claimed) and re-run matching so PhxAccel starts. */
+    PHXN_SEL_DBG_LAYOUT = 114,     /* no input; out: [0] VRAM MC base [1] VRAM size [2] system physical base [3] BAR0 length. */
     PHXN_SEL_DBG_SYSMEM = 111,     /* in: [0] op (1 alloc [1] bytes, 2 read [1] off, 3 write [1] off [2] val, 4 free)  out: [0] phys  [1] len/value */
     PHXN_SEL_DBG_DOORBELL = 110,   /* in: [0] doorbell BAR2 byte offset (8-aligned) [1] value lo [2] value hi; writes a 64-bit doorbell. */
 };
@@ -99,13 +100,14 @@ enum {
 #define PHX_PSP_GFX_CMD_UNION_OFFSET 28u
 #define PHX_PSP_GFX_CMD_SETUP_TMR    5u
 #define PHX_PSP_GFX_CMD_LOAD_IP_FW   6u
+#define PHX_PSP_GFX_CMD_LOAD_TOC     0x20u
 #define PHX_PSP_GFX_CMD_AUTOLOAD_RLC 0x21u
 
 /* Fixed VRAM regions for firmware bring-up (absolute byte offsets, all within the 256 MiB BAR0 aperture, clear
  * of the console framebuffer [0,0xFA0000) and the ring/cmd/fence region near 17 MiB).
  * TMR (Trusted Memory Region) the PSP copies firmware into; fw_buf where the CPU stages ucode for LOAD_IP_FW. */
-#define PHX_VRAM_TMR_OFF    0x1400000ull   /* 20 MiB */
-#define PHX_VRAM_TMR_CAP    0x1000000ull   /* up to 16 MiB */
+#define PHX_VRAM_TMR_OFF    0x08000000ull  /* 128 MiB; clear of the 128 MiB GART mapping */
+#define PHX_VRAM_TMR_CAP    0x04000000ull  /* Phoenix 13.0.4 LOAD_TOC requests 64 MiB */
 #define PHX_VRAM_FWBUF_OFF  0x4000000ull   /* 64 MiB */
 #define PHX_VRAM_FWBUF_SIZE 0x1000000ull   /* 16 MiB */
 
