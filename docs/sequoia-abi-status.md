@@ -9,8 +9,8 @@ Passing the linkage/layout checks alone must not authorize packaging or installa
 
 Target: HP EliteBook 845 G10, Ryzen 7 PRO 7840U, Radeon 780M `1002:15bf`,
 subsystem `103c:8b6e`, macOS 15.8.1 Sequoia build `24H32`.
-The independently bootable PhxGPU/PhxFB fallback is maintained separately in
-[`SKetU-l/phx-macos`](https://github.com/SKetU-l/phx-macos).
+Earlier work on PhxGPU/PhxFB remains an independently bootable fallback while
+development continues on this NullArc adaptation.
 
 ## Changes and evidence
 
