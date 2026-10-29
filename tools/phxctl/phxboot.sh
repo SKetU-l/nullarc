@@ -11,8 +11,15 @@ LOG=/var/log/phxboot.log; MARK=/var/db/phxboot.pending; OFF=$G/phxboot-off
 ALLOW=/Library/GPUBundles/nvmtl-allow.txt; DR=/Library/Logs/DiagnosticReports
 exec >>"$LOG" 2>&1
 echo "== $(date '+%F %T') phxboot"
+# The AuxKC and LaunchDaemon are shared by all OpenCore entries. Never modify
+# recovery markers, NVRAM or GPU registers on the independent fallback paths.
+args=$(nvram boot-args 2>/dev/null | cut -f2-)
+case " $args " in
+    *" nullarc_test=1 "*) ;;
+    *) echo "not the NullArc test entry: nothing to do"; exit 0 ;;
+esac
 release() { sysctl -w debug.phxfb_hold=0 >/dev/null 2>&1; }
-apps_only() { printf '# phxboot: Metal for the built-in test tools only\n' > $ALLOW; }
+apps_only() { printf '# phxboot: Metal for test tools only\n-WindowServer\nmtlprobe\n' > $ALLOW; }
 # every process gets the Metal device; WindowServer too once the accelerator is armed (NullMoth's own default list).
 # Denied ("-name", before "*"): the background neural-network users. mediaanalysisd (Photos analysis, which starts by
 # itself on an idle Mac on power) ran Espresso convolution kernels and hung the GPU within seconds (2026-10-21), and
@@ -89,7 +96,8 @@ if [ $M2 = 1 ]; then
     echo "WindowServer pid $(pgrep -x WindowServer), frames on the panel $(sysctl -n debug.nvaccel_iop_ok)"
 else
     release
-    all_apps " (WindowServer stays on the firmware framebuffer)" ""
+    apps_only
+    echo "Metal restricted to test apps; WindowServer stays on the firmware framebuffer"
 fi
 [ -e $G/phxboot-m2 ] && nvram phxfb-boot=1 && echo "PhxAMDFB armed for the next boot"
 rm -f "$MARK"; sync

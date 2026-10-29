@@ -11,16 +11,13 @@ enum { kIOAccelLegacySurfaceSize = 0x13b0 };
 class IOAccelLegacySurface : public IOAccelSurface {
     OSDeclareDefaultStructors(IOAccelLegacySurface);
 public:
-    // Unresolved on Sequoia 24H32: slot 327 has eight-argument Apple callers,
-    // not this sibling AMD signature. Slot 333 below is also unidentified.
-    // Keep the ABI gate closed; see docs/sequoia-abi-status.md.
-    virtual void setSyncCommand(unsigned int*, unsigned int&, unsigned int&, _AMDSurfaceSwapSyncOptions const&) const = 0;
+    virtual void submitSwapFlush(IOAccelEvent*, IOAccelResource2*, IOAccelResource2*, IOAccelSwapFlushRec const*, unsigned int, unsigned int, unsigned int, IOAccelBounds const*) = 0;
     virtual void didSubmitSwap(unsigned int, unsigned int);
     virtual bool isBackBufferReady(unsigned int);
     virtual void submitCopyForward(IOAccelEvent*, unsigned int, IOAccelResource2*, IOAccelResource2*, IOAccelBounds const*, unsigned int);
     virtual void submitUpdate(unsigned int, IOAccelBounds*, unsigned int);
     virtual void pickPresentType(unsigned int);
-    virtual void _pure335() = 0;
+    virtual bool canTmpAlloc(unsigned int) = 0;
 private:
     uint8_t _opaque[kIOAccelLegacySurfaceSize - sizeof(IOAccelSurface)];
 };

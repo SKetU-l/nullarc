@@ -38,6 +38,7 @@ class IOAccelResourcePrivate;
 class IOAccelSidebandBufferHeader;
 class IOAccelSurfaceInformation;
 class IOAccelSurfaceScaling;
+class IOAccelSwapFlushRec;
 class _AMDSurfaceSwapSyncOptions;
 class vendevtBarrierRec;
 class vendevtCommandRec;

@@ -459,6 +459,13 @@ static bool takeBootArming()
 
 bool PhxAMDFB::start(IOService *provider)
 {
+#ifdef NM_SEQUOIA
+    uint32_t test = 0;
+    if (!PE_parse_boot_argn("nullarc_test", &test, sizeof test) || test != 1) {
+        PFBLOG("not the NullArc test entry: leaving the fallback framebuffer and NVRAM untouched");
+        return false;
+    }
+#endif
     char arg[8];
     if (PE_parse_boot_argn("-phxfboff", arg, sizeof arg)) { PFBLOG("-phxfboff: leaving the firmware framebuffer"); return false; }
     if (!takeBootArming()) { PFBLOG("NVRAM phxfb-boot not set: leaving the firmware framebuffer this boot"); return false; }

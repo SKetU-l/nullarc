@@ -1,18 +1,18 @@
 #!/bin/bash
-# nullarc installer. Run from the unpacked release folder with sudo, once the Mac boots with PhxBringup.kext in
-# OpenCore (see INSTALL.md):
+# nullarc Sequoia 24H32 installer. Run from the staged folder with sudo, once the Mac boots with PhxBringup.kext in
+# the dedicated OpenCore entry (see INSTALL-SEQUOIA.md):
 #
 #   sudo ./install.sh                  Metal for apps on the Radeon 780M
 #   sudo ./install.sh --windowserver   the same, and from the second boot on WindowServer composites on the GPU too
 #   sudo ./install.sh --check          only the checks, nothing is changed
 #
 # It puts the boot-time GPU bring-up into /Users/Shared/gpu (run by the LaunchDaemon local.phxboot), PhxAccel.kext into
-# the Auxiliary kernel collection and the Metal plugin with Mesa RADV into PhxGPU, linked from /Library/GPUBundles.
+# the Auxiliary kernel collection and the Metal plugin with Mesa RADV onto the Data volume, linked from /Library/GPUBundles.
 # Running it again upgrades in place. Takes effect at the next boot.
 set -euo pipefail
 SRC=$(cd "$(dirname "$0")" && pwd)
 G=/Users/Shared/gpu
-H=/System/Library/CoreServices/CoreTypes.bundle/Contents/Library/PhxGPU
+H="/Library/Application Support/NullArc/PhxGPU"
 L=/Library/GPUBundles
 TS=$(date +%Y%m%d-%H%M%S)
 
@@ -33,32 +33,48 @@ FAILED=0
 say "== checks"
 [ "$(id -u)" = 0 ] || { say "  ✗ run it with sudo"; exit 1; }
 ver=$(sw_vers -productVersion)
-case "$ver" in 26.*) say "  ✓ macOS $ver" ;; *) fail "macOS $ver: nullarc is built for macOS Tahoe 26" ;; esac
+build=$(sw_vers -buildVersion)
+if [ "$ver" = 15.8.1 ] && [ "$build" = 24H32 ]; then
+    say "  ✓ macOS $ver ($build)"
+else
+    fail "macOS $ver ($build): this package is only ABI-validated for Sequoia 15.8.1 (24H32)"
+fi
 args=$(nvram boot-args 2>/dev/null | cut -f2- || true)
-for a in amfi=0x80 amfi_get_out_of_my_way=0x1 phxdebug=1; do
+for a in amfi=0x80 amfi_get_out_of_my_way=0x1 phxdebug=1 nullarc_test=1; do
     case " $args " in *" $a "*) say "  ✓ boot-arg $a" ;; *) fail "boot-arg $a is missing (OpenCore NVRAM -> boot-args)" ;; esac
 done
+if [ "$WS" = 1 ]; then
+    case " $args " in *" -phxfboff "*) fail "-phxfboff still blocks display takeover; test apps first, then remove it ONLY from PHXNULLARC" ;; esac
+fi
 if grep -q "status: enabled" <<<"$(csrutil status)"; then fail "System Integrity Protection is on (OpenCore csr-active-config 7F080000)"
 else say "  ✓ System Integrity Protection relaxed"; fi
 # read the registry once: grep -q on a pipe would stop ioreg early, and pipefail counts that as a failure
 IOR=$(ioreg -l -w0)
-build=$(grep -m1 '"phx-build"' <<<"$IOR" | grep -oE '[0-9]+$' || true)
-if [ -n "$build" ]; then say "  ✓ PhxBringup.kext is loaded (build $build)"
+phx_build=$(grep -m1 '"phx-build"' <<<"$IOR" | grep -oE '[0-9]+$' || true)
+if [ -n "$phx_build" ]; then say "  ✓ PhxBringup.kext is loaded (build $phx_build)"
 else fail "PhxBringup.kext is not loaded: add EFI/OC/Kexts/PhxBringup.kext to OpenCore and reboot first"; fi
 if grep -qE '"compatible" = <[^>]*"pci1002,(15bf|15c8|1900|1901)"' <<<"$IOR"; then say "  ✓ Radeon 780M/760M found"
 else say "  ! no Radeon 780M/760M (1002:15bf/15c8/1900/1901) found: other GPUs are not supported"; fi
 for f in EFI/OC/Kexts/PhxBringup.kext Library/Extensions/PhxAccel.kext PhxGPU/NVMTLDriver.bundle PhxGPU/nvmtl/libvulkan_radeon.dylib \
-         gpu/phxboot.sh gpu/full.sh gpu/bringup5.sh gpu/kinst.sh gpu/phxctl/phxctl gpu/phxctl/mesboot gpu/local.phxboot.plist; do
+         gpu/phxboot.sh gpu/full.sh gpu/bringup5.sh gpu/kinst.sh gpu/test-metal.sh gpu/phxctl/phxctl gpu/phxctl/mesboot gpu/phxctl/mtlprobe gpu/local.phxboot.plist; do
     [ -e "$SRC/$f" ] || fail "package file $f is missing"
 done
 [ "$(ls "$SRC"/gpu/fw/*.bin 2>/dev/null | wc -l)" -ge 9 ] || fail "package firmware gpu/fw is incomplete"
 [ $FAILED = 0 ] || { say "Fix the items marked ✗ and run it again."; exit 1; }
 [ $CHECK = 1 ] && { say "All checks passed; nothing was changed (--check)."; exit 0; }
 
+say "== backup existing system-side NullArc files"
+BACKUP=/Users/Shared/nullarc-backup/$TS
+mkdir -p "$BACKUP"
+for old in "$G" "$H" /Library/Extensions/PhxAccel.kext /Library/LaunchDaemons/local.phxboot.plist "$L/nvmtl-allow.txt"; do
+    if [ -e "$old" ]; then mkdir -p "$BACKUP$(dirname "$old")"; ditto "$old" "$BACKUP$old"; fi
+done
+say "  previous files, if any: $BACKUP"
+
 say "== GPU bring-up -> $G"
 mkdir -p "$G/phxctl" "$G/fw" "$G/backup"
-for f in phxboot.sh full.sh bringup5.sh kinst.sh; do install -m 755 "$SRC/gpu/$f" "$G/$f"; done
-install -m 755 "$SRC/gpu/phxctl/phxctl" "$SRC/gpu/phxctl/mesboot" "$G/phxctl/"
+for f in phxboot.sh full.sh bringup5.sh kinst.sh test-metal.sh; do install -m 755 "$SRC/gpu/$f" "$G/$f"; done
+install -m 755 "$SRC/gpu/phxctl/phxctl" "$SRC/gpu/phxctl/mesboot" "$SRC/gpu/phxctl/mtlprobe" "$G/phxctl/"
 install -m 644 "$SRC"/gpu/fw/*.bin "$G/fw/"
 chown -R root:wheel "$G"
 rm -f "$G/phxboot-off" /var/db/phxboot.pending
@@ -91,7 +107,7 @@ for n in NVMTLDriver.bundle nvmtl; do
     ln -sfn "$H/$n" "$L/$n"
 done
 # phxboot writes the real list at every boot; until then only the built-in test tools get the device
-printf '# phxboot: Metal for the built-in test tools only\n' > "$L/nvmtl-allow.txt"; chmod 644 "$L/nvmtl-allow.txt"
+printf '# phxboot: Metal for test tools only\n-WindowServer\nmtlprobe\n' > "$L/nvmtl-allow.txt"; chmod 644 "$L/nvmtl-allow.txt"
 
 say "== LaunchDaemon local.phxboot"
 install -m 644 -o root -g wheel "$SRC/gpu/local.phxboot.plist" /Library/LaunchDaemons/local.phxboot.plist

@@ -1,13 +1,14 @@
 #!/bin/bash
-# nullarc uninstaller: sudo ./uninstall.sh. Removes what install.sh put on the system volume and the Data volume;
-# PhxBringup.kext and the boot-args stay in OpenCore until you take them out (see INSTALL.md). Reboot afterwards.
+# nullarc Sequoia uninstaller: sudo ./uninstall.sh. Removes the staged Data-volume files;
+# PhxBringup.kext and the boot-args stay in PHXNULLARC (see INSTALL-SEQUOIA.md). Reboot afterwards.
 set -uo pipefail
 [ "$(id -u)" = 0 ] || { echo "run it with sudo"; exit 1; }
 G=/Users/Shared/gpu
-H=/System/Library/CoreServices/CoreTypes.bundle/Contents/Library/PhxGPU
+H="/Library/Application Support/NullArc/PhxGPU"
 L=/Library/GPUBundles
 
 echo "== boot-time bring-up"
+mkdir -p "$G"; touch "$G/phxboot-off"
 rm -f /Library/LaunchDaemons/local.phxboot.plist /var/db/phxboot.pending
 nvram -d phxfb-boot 2>/dev/null
 
@@ -18,13 +19,14 @@ rm -rf "$H"
 
 echo "== PhxAccel.kext"
 rm -rf /Library/Extensions/PhxAccel.kext
-# rebuild the Auxiliary kernel collection from what is left in /Library/Extensions; with nothing left, drop it
+# Rebuild from the remaining kexts. Never delete a shared collection on a build
+# failure: it may also contain unrelated kexts needed by the fallback.
 if ! { [ -x "$G/kinst.sh" ] && BK=/var/tmp "$G/kinst.sh"; }; then
-    rm -f /Library/KernelCollections/AuxiliaryKernelExtensions.kc
-    echo "  no Auxiliary kernel collection to rebuild: removed it"
+    echo "  rebuild failed: existing Auxiliary collection retained; bring-up disabled"
+    echo "  keep $G/kinst.sh and inspect /var/tmp/phx-kmutil.log before retrying"
+    exit 1
 fi
 
 rm -rf "$G"
 echo ""
-echo "Removed. Now take PhxBringup.kext out of OpenCore (EFI/OC/Kexts and Kernel -> Add) and, if nothing else"
-echo "needs them, the amfi=0x80 amfi_get_out_of_my_way=0x1 phxdebug=1 boot-args, then reboot."
+echo "Removed. Reboot using PHXMAC or PHXMACSAFE. Only PHXNULLARC contains PhxBringup and the NullArc test boot-args."

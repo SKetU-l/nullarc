@@ -1,11 +1,13 @@
 # EliteBook / Sequoia compatibility status
 
-## Gate: blocked (2026-10-28)
+## Gate: passed (2026-10-29)
 
 `compat/elitebook-sequoia` is an experimental source branch based on upstream
-`cbb08dd`. It is **not an installable Sequoia release**. The exact-24H32 checker
-exits 1 because two `IOAccelLegacySurface` pure methods remain unresolved.
-Passing the linkage/layout checks alone must not authorize packaging or installation.
+`cbb08dd`. The complete exact-24H32 static ABI checker now passes, including the
+two recovered `IOAccelLegacySurface` pure methods. Runtime GPU functionality is
+still untested. The Sequoia staging/publishing tools enforce the gate and keep
+the independent PhxGPU/PhxFB and Safe boot paths unchanged; see
+[INSTALL-SEQUOIA.md](INSTALL-SEQUOIA.md).
 
 Target: HP EliteBook 845 G10, Ryzen 7 PRO 7840U, Radeon 780M `1002:15bf`,
 subsystem `103c:8b6e`, macOS 15.8.1 Sequoia build `24H32`.
@@ -29,6 +31,10 @@ development continues on this NullArc adaptation.
 - Six GL/2D pure declarations were recovered from exact-24H32 AMD/Intel
   implementations. The unsupported GL surface-mode stub returns `false`;
   allocation-info outputs are initialized. These stubs do not implement GL/2D.
+- `IOAccelLegacySurface` slot 327 is now the eight-argument
+  `submitSwapFlush(...)`; slot 333 is `bool canTmpAlloc(unsigned int)`.
+  The swap stub uses the existing flip/copy scanout path and temporary
+  allocation is allowed, matching the pinned concrete LegacySurface behavior.
 - Bring-up, queue validation/adoption and accelerator-claim failures propagate
   to the boot script instead of allowing it to continue as if successful.
   `mesboot` also aborts on register, VRAM, doorbell or system-memory transport
@@ -42,26 +48,25 @@ The current checker verifies:
 | Final linked private imports | 463 accelerator + 17 AGDC = **480**, externally exported |
 | Apple base-vtable tail calls | **61** compiled shims for **27** local methods |
 | Vtable lengths and non-pure method/parameter order | **15** classes |
-| Pure method/parameter signatures | **47** exact-24H32 vendor references |
+| Pure method/parameter signatures | **47** exact-24H32 vendor references + **2** recovered LegacySurface slots |
 | AGDC pure callback | Separate call-site/argument-forwarding check |
 | Apple metaclass sizes | **26**, including accelerator `0xdd8`, AGDC `0x110` |
 | Selected private offsets | Accelerator `0xc78`/`0xcb0`, display machine `0x108`/`0x88`, pipe `0x98` |
 
 The 50 pure slots comprise 47 vendor-corroborated slots, the AGDC callback and
-the two unresolved surface slots. Ordinary C++ mangling does not establish
-return types; call-site/implementation evidence is needed separately.
+the two recovered surface slots. Ordinary C++ mangling does not establish
+return types; call-site/implementation evidence is checked separately.
 These are static compatibility checks, not proof of GPU or Metal functionality,
 and do not validate every private field used by the upstream driver.
 
-## The two unresolved slots
+## Recovered LegacySurface slots
 
 Slot numbers below are zero-based function entries, excluding the two Itanium
 vtable header words. Exact-24H32 `IOAccelSurface` has 327 entries;
 `IOAccelLegacySurface` has 334.
 
-### Slot 327: incorrect upstream `setSyncCommand`
+### Slot 327: `submitSwapFlush(...)`
 
-The source still declares a four-argument `setSyncCommand(...) const` here.
 Exact-24H32 `IOAccelLegacySurface::submit_scanout_swap(unsigned int, unsigned int)`
 and `submit_swap(unsigned int, unsigned int)` call `*0xa38(%r10)` at `0x1570b`
 and `0x15ab7`. Both pass **eight explicit arguments** in addition to `this`:
@@ -72,8 +77,8 @@ and `0x15ab7`. Both pass **eight explicit arguments** in addition to `this`:
 - `%r9d`: scalar;
 - three stack arguments, distinct from alignment padding.
 
-`check_legacy_swap_callers()` reproduces this calling-shape check. It disproves
-the current declaration but cannot recover every source-level type or the name.
+`check_legacy_swap_callers()` reproduces this calling-shape check. It rejects
+the former four-argument AMD sibling declaration and locks the exact calling ABI.
 
 Historical Apple `GeForce-beta6` has a genuine `nvSurface : IOAccelLegacySurface`
 and identifies slot 327 as:
@@ -84,37 +89,47 @@ submitSwapFlush(IOAccelEvent*, IOAccelResource2*, IOAccelResource2*,
                 unsigned int, IOAccelBounds const*)
 ```
 
-This is a strong lead, **not an independently established exact-24H32 signature**.
-No return type is claimed from its mangled name.
+That genuine subclass has the same seven-entry LegacySurface tail as 24H32:
+the five named methods at slots 328–332 remain in the same order, with the two
+pure slots at 327 and 333. Historical continuity supplies the method name and
+source-level pointer types; the exact callers remain authoritative for the
+24H32 argument count, order and slot. The caller ignores a return value, and
+the recovered declaration uses the historical `void` behavior.
 
-### Slot 333: unidentified upstream `_pure335()`
+### Slot 333: `bool canTmpAlloc(unsigned int)`
 
 Exact-24H32 contains a real `___cxa_pure_virtual` relocation at `0x728e8`,
 inside the vtable starting at `0x71e70`. Padding follows; the MetaClass vtable
 begins at `0x728f8`. This slot is not padding or a vtable-length mistake.
 
-Historical Apple GeForce identifies it as `canTmpAlloc(unsigned int)`. Its
-implementation writes `1` to `%al`, supporting a `bool` return. The older
-NVIDIA WebDriver also supplies this name and bool-return evidence, but has an
-older `IOAccelSurface2` hierarchy and different slot numbers.
+Every inspected exact-24H32 x86 vendor surface appends
+`canTmpAlloc(unsigned int)`: AMD X4000/X5000/X6000 place it after their sibling
+`setSyncCommand`, while Intel KBL/ICL append it directly to `IOAccelSurface`.
+Intel returns through `%al` while the upper part of `%eax` still contains the
+unsigned argument, establishing a one-byte `bool` ABI rather than an `int`.
+
+Historical Apple GeForce binds that same method to genuine LegacySurface slot
+333 and returns `true`; the older NVIDIA WebDriver independently supplies the
+same name and bool-return evidence despite its older hierarchy. The NullArc
+stub therefore returns `true`.
 
 No exact-24H32 concrete LegacySurface implementation or direct caller of slot
-333 was found in the inspected accelerator, AMD X4000/X5000/X6000, Intel KBL/ICL,
-AppleVirtualGraphics or AppleParavirtGPU binaries. AppleParavirtGPUIOGPUFamily
-has no x86_64 slice. The complete KDK payload listing contains neither GeForce
-nor an IOAcceleratorFamily2 debug-symbol bundle. Absence of a caller is not ABI proof.
+333 exists in the inspected KDK binaries. The identity therefore rests on the
+combination of the exact pure slot/tail layout, exact same-build sibling method
+ABI and pinned direct-subclass continuity—not on absence of a caller.
 
 ### Avoid the sibling-vtable false positive
 
 Exact-24H32 AMD X4000/X5000 surfaces inherit `IOAccelSurface`, not
-`IOAccelLegacySurface`. AMD's `setSyncCommand` at 327 and `canTmpAlloc` at 328
-are sibling-specific additions. Intel KBL/ICL similarly append `canTmpAlloc`
-at 327. None identifies LegacySurface's appended slots.
+`IOAccelLegacySurface`. AMD's `setSyncCommand` at 327 is a sibling-specific
+addition and still cannot identify LegacySurface slot 327. Intel and AMD
+`canTmpAlloc` entries establish the same-build method ABI but do not alone bind
+it to LegacySurface slot 333; the genuine historical subclass provides that link.
 
 The checker establishes both superclass chains, uses named non-pure entries
 as alignment anchors and bounds comparisons by the verified shared ancestor.
 Regression tests exercise sibling-tail rejection, false inheritance, reordered
-prefixes, multilevel inheritance and the complete closed gate.
+prefixes, multilevel inheritance, both recovered signatures and the complete gate.
 
 ## Reproduce from Linux
 
@@ -126,21 +141,27 @@ complete `MacOSX15.5.sdk`), plus Clang, `ld64.lld`, Python, `c++filt`,
 sh tools/build_sequoia_kexts.sh
 sh tools/build_sequoia_tools.sh
 make test
-python3 tests/test_sequoia_abi.py "$HOME/.cache/phx-research/kdk-24H32/target"
-python3 -u tools/check_sequoia_abi.py "$HOME/.cache/phx-research/kdk-24H32/target"
+KDK_ROOT=/run/media/sketu/HHD/phx-research/kdk-24H32/target
+python3 tests/test_sequoia_abi.py "$KDK_ROOT"
+python3 -u tools/check_sequoia_abi.py "$KDK_ROOT"
 ```
 
-The regression suite is expected to pass; the final command is expected to
-**exit 1**, ending with `ABI gate closed:` and both `NMXSurface[327]` and
-`NMXSurface[333]`. `build/sequoia` contains experimental analysis binaries only.
+Both commands must pass. `build/sequoia` remains experimental until hardware
+testing succeeds and the separate recoverable OpenCore test path is staged.
 `make test` reports skipped firmware-fixture cases if fixtures are absent;
 `make fixtures` and `REQUIRE_FIXTURES=1 make test` enable those cases.
 
-Latest local verification: both kexts and userspace clients cross-built;
-`REQUIRE_FIXTURES=1 make test` passed including all firmware fixtures and the
-three fault-injection tests (21 scenarios); all five exact-KDK regression
-tests passed. The ABI checker still exits 1 on exactly the two slots above.
-Shell syntax, personality plist checks and `git diff --check` passed.
+Latest ABI verification: both kexts rebuilt; all seven exact-KDK regression
+tests passed; the complete exact-24H32 checker passed, including 480 private
+imports, 15 vtables, 50 pure slots, 61 shims, 26 class sizes and selected
+private offsets. Runtime GPU functionality remains untested.
+
+The full firmware-backed suite, bring-up fault injection and thirteen
+staging/installer regressions also pass. The USB-preserving cloned plist and
+the unchanged Safe boot source both pass `ocvalidate` 1.0.8 (the original
+OpenCore loader is retained, not replaced). The initial test entry explicitly
+blocks framebuffer takeover with `-phxfboff`; the shared daemon and Sequoia
+framebuffer require `nullarc_test=1`, leaving fallback boots inactive.
 
 ## Source provenance
 
@@ -150,7 +171,7 @@ Per-binary SHA-256 values are enforced by `SOURCES` and `REFERENCE_SOURCES` in
 `tools/check_sequoia_abi.py`. Versions: IOAcceleratorFamily2 `485.2`,
 IOGraphicsFamily `599`, AppleGraphicsDeviceControl `8.1.10`.
 
-Historical evidence (never used to satisfy the exact-build gate):
+Historical continuity evidence (not substituted for exact-build slot/call checks):
 
 | Binary | Source | SHA-256 |
 |---|---|---|
@@ -158,23 +179,16 @@ Historical evidence (never used to satisfy the exact-build gate):
 | GeForce (patched) | Same pinned revision, `12.0 Beta 6-23.4` directory | `dc666a02220d8d196a426e0e23d5a2d4c44719b70cee0ac9464d0b20845ed846` |
 | GeForceWeb | [WebDriver 387.10.10.10.40.140](https://raw.githubusercontent.com/dortania/PatcherSupportPkg/master/Universal-Binaries/WebDriver-387.10.10.10.40.140/Library/Extensions/GeForceWeb.kext/Contents/MacOS/GeForceWeb) | `31d43ab12631418b1841860ea8ebdabd3ccb138dd6e8889216bd23bab531daf5` |
 
-Durable research cache: `$HOME/.cache/phx-research`. `kdk-24H32` holds the
-archive, extracted `target`, `payload-files.txt`, `accel-disassembly.txt` and
-`submit-swap-disassembly.txt`; `monterey-geforce` and
+The verified archive, regular-file KDK target and payload listing are stored at
+`/run/media/sketu/HHD/phx-research/kdk-24H32`; the archive hash above was
+rechecked after download. `$HOME/.cache/phx-research/monterey-geforce` and
 `nvidia-webdriver-387.10.10.10.40.140` hold the historical binaries.
 Apple/NVIDIA research binaries are not part of this source repository.
 
 ## Remaining work
 
-1. Obtain exact-24H32 type/symbol evidence or a concrete LegacySurface
-   implementation for both unresolved methods. Pure-vtable relocations alone
-   carry no method name or parameter types. Historical continuity alone does
-   not meet the current gate.
-2. Correct declarations and stub behavior using that evidence, update the
-   regression expectations, rebuild and pass the gate on the resulting binary.
-3. Complete a Sequoia-specific installer and recoverable test staging. The
-   existing installer still targets Tahoe; its instructions are not Sequoia
-   installation instructions.
-4. Validate bring-up and Metal on macOS using a separately bootable test
+1. Validate bring-up and Metal on macOS using the separately bootable test
    configuration, preserving the working PhxGPU/PhxFB fallback. Start with
    explicit test applications before enabling WindowServer acceleration.
+2. Qualify Data-volume plugin sandbox access, application stability and
+   sleep/wake separately; static ABI success does not establish these.

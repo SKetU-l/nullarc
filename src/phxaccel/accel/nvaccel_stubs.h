@@ -100,8 +100,17 @@ class NVSurface : public IOAccelLegacySurface {
     OSDeclareDefaultStructors(NVSurface)
     NM_TAHOE_FWD(NVSurface)
 public:
-    void setSyncCommand(unsigned int* a0, unsigned int& a1, unsigned int& a2, _AMDSurfaceSwapSyncOptions const& a3) const APPLE_KEXT_OVERRIDE { ALOG("NVSurface::setSyncCommand"); }
-    void _pure335() APPLE_KEXT_OVERRIDE { ALOG("NVSurface::_pure335"); }
+    void submitSwapFlush(IOAccelEvent* a0, IOAccelResource2* a1, IOAccelResource2* a2, IOAccelSwapFlushRec const* a3, unsigned int a4, unsigned int a5, unsigned int a6, IOAccelBounds const* a7) APPLE_KEXT_OVERRIDE {
+        (void)a0; (void)a3; (void)a4; (void)a5; (void)a6; (void)a7;
+        nvAccelSwapProbe(a1, a2);
+        IOAccelResource2 *src = nvAccelResHasContent(a2) ? a2
+                              : nvAccelResHasContent(a1) ? a1 : nullptr;
+        if (src && !nvAccelFlipTo(src)) nvAccelCopyToScanout(src);
+    }
+    bool canTmpAlloc(unsigned int a0) APPLE_KEXT_OVERRIDE {
+        ALOG("NVSurface::canTmpAlloc(%u)", a0);
+        return true;
+    }
     bool copyFromBuffer(int a0, int a1, int a2, int a3, unsigned int a4, unsigned int a5, IOAccelEvent* a6, IOAccelResource2* a7, IOAccelSysMemory* a8, unsigned int a9, unsigned long long a10, unsigned int a11) APPLE_KEXT_OVERRIDE { ALOG("NVSurface::copyFromBuffer"); return false; }
     bool copyToBuffer(int a0, int a1, int a2, int a3, unsigned int a4, unsigned int a5, IOAccelEvent* a6, IOAccelResource2* a7, IOAccelSysMemory* a8, unsigned int a9, unsigned long long a10, unsigned int a11) APPLE_KEXT_OVERRIDE { ALOG("NVSurface::copyToBuffer"); return false; }
     void submitSwapCopy(IOAccelEvent* a0, IOAccelResource2* a1, IOAccelResource2* a2) APPLE_KEXT_OVERRIDE {

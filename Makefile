@@ -40,6 +40,7 @@ test: $(TESTS)
 		$$t || exit 1; \
 	done
 	python3 tests/test_phx_bringup.py
+	python3 tests/test_sequoia_staging.py
 	@echo "All unit tests passed successfully!"
 
 fixtures:

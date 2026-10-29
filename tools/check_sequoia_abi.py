@@ -4,7 +4,6 @@
 Usage: check_sequoia_abi.py KDK_ROOT [build/sequoia/PhxAccel.kext/Contents/MacOS/PhxAccel]
 Requires c++filt and llvm-objdump. KDK_ROOT contains System/Library/Extensions.
 This checks linkage, layout and recovered method signatures, not GPU execution.
-Unidentified pure slots fail the gate even when all linkage/layout checks pass.
 """
 import argparse
 import hashlib
@@ -48,12 +47,15 @@ PURE_REFERENCES = {
     'IOAccelMemoryMap': [('amd4000', 'AMDRadeonX4000_AMDAccelMemoryMap', 'IOAccelMemoryMap')],
     'IOGraphicsAccelerator2': [('amd4000', 'AMDRadeonX4000_AMDEllesmereGraphicsAccelerator', 'IOGraphicsAccelerator2')],
 }
-# No exact-24H32 concrete LegacySurface implementation has been found. The
-# four-argument AMD setSyncCommand at 327 belongs to a sibling, not this class.
-# Historical NVIDIA submitSwapFlush/canTmpAlloc are research leads only.
-UNRECOVERED_PURE = {
-    ('IOAccelLegacySurface', 327): 'Apple callers pass eight explicit arguments; exact signature unresolved',
-    ('IOAccelLegacySurface', 333): 'no recovered exact-24H32 Apple signature (historical canTmpAlloc lead only)',
+# Exact 24H32 establishes the slot positions and calling ABI. Historical
+# nvSurface, a genuine IOAccelLegacySurface subclass, supplies the names and
+# source-level pointer types. See check_legacy_swap_callers(),
+# check_legacy_tmp_alloc() and docs/sequoia-abi-status.md.
+RECOVERED_PURE = {
+    ('IOAccelLegacySurface', 327):
+        'submitSwapFlush(IOAccelEvent*, IOAccelResource2*, IOAccelResource2*, '
+        'IOAccelSwapFlushRec const*, unsigned int, unsigned int, unsigned int, IOAccelBounds const*)',
+    ('IOAccelLegacySurface', 333): 'canTmpAlloc(unsigned int)',
 }
 PAIRS = {
     'IOAccelResource2': 'NMXResource',
@@ -257,6 +259,32 @@ def check_legacy_swap_callers(apple):
                 f'{symbol}: LegacySurface[327] eight-argument call evidence changed')
 
 
+def check_legacy_tmp_alloc(sources, signature):
+    # Every exact-24H32 x86 surface implementation that appends this feature
+    # names it canTmpAlloc(unsigned int). These are siblings, so they establish
+    # the same-build method ABI and bool return, not LegacySurface's slot by
+    # themselves. Pinned nvSurface continuity establishes that slot 333 is the
+    # LegacySurface form of the same method.
+    references = (
+        ('amd4000', 'AMDRadeonX4000_AMDAccelSurface', 328),
+        ('amd5000', 'AMDRadeonX5000_AMDAccelSurface', 328),
+        ('intel', 'IGAccelSurface', 327),
+    )
+    for source, cls, index in references:
+        binary = sources[source]
+        binary.require_ancestor(cls, 'IOAccelSurface')
+        target = binary.slot(cls, index)
+        require(signature(target) == 'canTmpAlloc(unsigned int)',
+                f'{cls}[{index}]: exact-24H32 temporary-allocation signature changed')
+
+    # EAX still contains the unsigned argument when Intel writes only AL.
+    # Therefore callers consume a one-byte bool, not an int return value.
+    code = disassemble(sources['intel'], '__ZN14IGAccelSurface11canTmpAllocEj')
+    require(re.search(r'movl\s+%esi, %eax', code) and
+            re.search(r'setne\s+%al', code),
+            'exact-24H32 canTmpAlloc bool-return evidence changed')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('kdk_root', type=Path)
@@ -298,7 +326,7 @@ def main():
     local_targets = set()
     pure_count = 0
     named_pure_count = 0
-    unresolved_pure = []
+    recovered_pure_count = 0
     for base, vendor in PAIRS.items():
         apple = sources['agdc' if base == 'AppleGraphicsDeviceControl' else 'accel']
         a, b = apple.vtable(base), ours.vtable(vendor)
@@ -307,8 +335,10 @@ def main():
             if parent == '___cxa_pure_virtual':
                 require(child in ours.defined, f'{vendor}[{i}]: unimplemented pure virtual')
                 pure_count += 1
-                if (base, i) in UNRECOVERED_PURE:
-                    unresolved_pure.append(f'{vendor}[{i}]: {demangled[child]}: {UNRECOVERED_PURE[base, i]}')
+                if (base, i) in RECOVERED_PURE:
+                    require(signature(child) == RECOVERED_PURE[base, i],
+                            f'{vendor}[{i}]: {demangled[child]} != {RECOVERED_PURE[base, i]}')
+                    recovered_pure_count += 1
                 elif base == 'AppleGraphicsDeviceControl':
                     require(i == 266 and signature(child) ==
                             'vendor_doDeviceAttribute(unsigned int, unsigned long*, unsigned long, '
@@ -346,9 +376,14 @@ def main():
     print('PASS: all 61 shims reach the correct Apple slots for 27 local methods; 50 pure slots have vendor entries')
     require(named_pure_count == 47, f'Unexpected named pure-slot coverage: {named_pure_count}')
     print('PASS: 47 pure-slot method/parameter signatures corroborated by exact 24H32 vendor binaries')
+    require(recovered_pure_count == 2,
+            f'Unexpected recovered LegacySurface pure-slot coverage: {recovered_pure_count}')
 
     check_legacy_swap_callers(sources['accel'])
-    print('PASS: both exact-24H32 LegacySurface[327] callers pass eight explicit arguments')
+    print('PASS: exact-24H32 LegacySurface[327] callers match submitSwapFlush\'s eight arguments')
+    check_legacy_tmp_alloc(sources, signature)
+    print('PASS: exact-24H32 sibling surfaces corroborate canTmpAlloc(unsigned int) and its bool return')
+    print('PASS: both recovered LegacySurface pure-slot signatures match the linked NMXSurface vtable')
 
     # The six-parameter AGDC overload preserves register arguments, replaces
     # its last stack argument with state->args and calls pure slot 266.
@@ -392,7 +427,6 @@ def main():
     require(re.search(r'movq\s+0x98\(%rdi\), %rax', code), 'Display-pipe framebuffer moved')
     print('PASS: private offsets: accelerator 0xc78/0xcb0, display machine 0x108/0x88, display pipe 0x98')
     print('24H32 linkage/layout checks passed')
-    require(not unresolved_pure, 'ABI gate closed:\n' + '\n'.join(unresolved_pure))
     print('24H32 private ABI checks passed; runtime functionality remains untested')
 
 

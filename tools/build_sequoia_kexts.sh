@@ -36,7 +36,7 @@ cp "$ROOT/src/phxbringup/Info.plist" "$OUT/PhxBringup.kext/Contents/Info.plist"
 $CXX $CXX_COMMON -O2 -I"$ROOT/src/phxaccel" -I"$ROOT/src/phxaccel/accel" -I"$ROOT/src/phxaccel/accel/iofam" \
   -I"$ROOT/src/phxaccel/accel/re" -DNMX_ACCEL -DNM_SEQUOIA -DPHX_FB \
   -Wno-unused-function -Wno-unused-variable -c "$ROOT/src/phxaccel/accel/nvrm-accel.cpp" -o "$OUT/obj/accel/accel.o"
-$CXX $CXX_COMMON -O2 -I"$ROOT/src/phxaccel" -c "$ROOT/src/phxaccel/accel/phxfb.cpp" -o "$OUT/obj/accel/phxfb.o"
+$CXX $CXX_COMMON -O2 -DNM_SEQUOIA -I"$ROOT/src/phxaccel" -c "$ROOT/src/phxaccel/accel/phxfb.cpp" -o "$OUT/obj/accel/phxfb.o"
 $CXX $CXX_COMMON -O2 -I"$ROOT/src/phxaccel" -c "$ROOT/src/phxaccel/accel/phxagdc.cpp" -o "$OUT/obj/accel/phxagdc.o"
 $LD64 -arch x86_64 -kext -static -macos_version_min 11.0 -no_deduplicate -L"$LIB" \
   "$OUT/obj/accel/accel.o" "$OUT/obj/accel/phxfb.o" "$OUT/obj/accel/phxagdc.o" -lkmodc++ -lkmod \
@@ -44,4 +44,4 @@ $LD64 -arch x86_64 -kext -static -macos_version_min 11.0 -no_deduplicate -L"$LIB
 cp "$ROOT/src/phxaccel/Info.plist" "$OUT/PhxAccel.kext/Contents/Info.plist"
 
 echo "built experimental Sequoia kexts in $OUT"
-echo "ABI validation required: see docs/sequoia-abi-status.md (installation gate closed)"
+echo "run the exact-24H32 ABI checker before installation; see docs/sequoia-abi-status.md"

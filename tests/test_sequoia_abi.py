@@ -14,7 +14,9 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from tools.check_sequoia_abi import (MachO, SOURCES, REFERENCE_SOURCES,
-                                    encoded, reference_slot, validate_reference)
+                                     RECOVERED_PURE, check_legacy_swap_callers,
+                                     check_legacy_tmp_alloc, encoded,
+                                     reference_slot, validate_reference)
 
 
 class ReferenceRegressionTests(unittest.TestCase):
@@ -26,7 +28,9 @@ class ReferenceRegressionTests(unittest.TestCase):
             if hashlib.sha256(path.read_bytes()).hexdigest() != digest:
                 raise ValueError(f'{path}: not the exact 24H32 reference')
             cls.binaries[name] = MachO(path)
-        names = sorted(set().union(*(b.defined.keys() | b.imported for b in cls.binaries.values())))
+        cls.ours = MachO(args.kext)
+        names = sorted((cls.ours.defined.keys() | cls.ours.imported) |
+                       set().union(*(b.defined.keys() | b.imported for b in cls.binaries.values())))
         text = '\n'.join(s[1:] if s.startswith('__Z') else s for s in names)
         cls.demangled = dict(zip(names, subprocess.check_output(
             ['c++filt'], input=text, text=True).splitlines()))
@@ -74,16 +78,25 @@ class ReferenceRegressionTests(unittest.TestCase):
                                    cls, 'IOGraphicsAccelerator2', self.signature)
         self.assertEqual(limit, 350)
 
-    def test_complete_gate_reports_both_unresolved_slots(self):
+    def test_recovered_legacy_surface_signatures(self):
+        slots = self.ours.vtable('NMXSurface')
+        self.assertEqual(self.signature(slots[327]),
+                         RECOVERED_PURE['IOAccelLegacySurface', 327])
+        self.assertEqual(self.signature(slots[333]),
+                         RECOVERED_PURE['IOAccelLegacySurface', 333])
+
+    def test_exact_legacy_surface_calling_evidence(self):
+        check_legacy_swap_callers(self.binaries['accel'])
+        check_legacy_tmp_alloc(self.binaries, self.signature)
+
+    def test_complete_gate_passes(self):
         checker = Path(__file__).resolve().parents[1] / 'tools/check_sequoia_abi.py'
         result = subprocess.run([sys.executable, '-u', str(checker), str(args.kdk_root), str(args.kext)],
                                 text=True, capture_output=True)
-        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn('24H32 linkage/layout checks passed', result.stdout)
-        self.assertIn('ABI gate closed:', result.stderr)
-        self.assertIn('NMXSurface[327]', result.stderr)
-        self.assertIn('NMXSurface[333]', result.stderr)
-        self.assertNotIn('24H32 private ABI checks passed', result.stdout)
+        self.assertIn('24H32 private ABI checks passed', result.stdout)
+        self.assertNotIn('ABI gate closed:', result.stderr)
 
 
 if __name__ == '__main__':

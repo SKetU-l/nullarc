@@ -17,4 +17,8 @@ for tool in phxctl mesboot; do
     "$LD64" -arch x86_64 -platform_version macos 15.0 15.5 -syslibroot "$SDK" \
         -lSystem -framework IOKit -framework CoreFoundation "$OUT/$tool.o" -o "$OUT/$tool"
 done
+"$CC" -target x86_64-apple-macos15 -isysroot "$SDK" -O2 -Wall -Wextra -Werror -fobjc-arc \
+    -c "$ROOT/tools/phxctl/mtlprobe.m" -o "$OUT/mtlprobe.o"
+"$LD64" -arch x86_64 -platform_version macos 15.0 15.5 -syslibroot "$SDK" \
+    -lSystem -lobjc -framework Metal -framework Foundation "$OUT/mtlprobe.o" -o "$OUT/mtlprobe"
 echo "built Sequoia tools in $OUT"
