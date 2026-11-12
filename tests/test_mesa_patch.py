@@ -22,14 +22,15 @@ def materialize(root):
     for path in paths:
         r = subprocess.run(['git', '-C', str(mesa), 'show', f'{base_ref}:{path}'], capture_output=True)
         if r.returncode:
-            assert path.endswith(('/phx_topology.h', '/phx_hp_760m.h')), r.stderr
+            assert path.endswith(('/phx_topology.h', '/phx_hp_760m.h', '/phx_elitebook_780m.h')), r.stderr
             continue
         target = root / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(r.stdout)
 
 
-with tempfile.TemporaryDirectory() as a, tempfile.TemporaryDirectory() as b:
+with tempfile.TemporaryDirectory(prefix='mesa-generated-', dir='/tmp/opencode') as a, \
+     tempfile.TemporaryDirectory(prefix='mesa-patched-', dir='/tmp/opencode') as b:
     generated, patched = Path(a), Path(b)
     materialize(generated)
     materialize(patched)

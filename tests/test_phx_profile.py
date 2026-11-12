@@ -12,6 +12,14 @@ spec.loader.exec_module(profile)
 
 
 class ProfileTests(unittest.TestCase):
+    def test_elitebook_capture_and_header(self):
+        p = profile.load(profile.ELITEBOOK_PROFILE)
+        self.assertEqual(p['pci'], dict(vendor=0x1002, device=0x15bf, revision=0xd7,
+                                       subvendor=0x103c, subdevice=0x8b6e))
+        self.assertEqual(p['cu_bitmap'][0], [0x3f, 0x3f, 0, 0])
+        self.assertEqual(p['enabled_rb_pipes_mask'], 0xf)
+        self.assertEqual(profile.ELITEBOOK_HEADER.read_text(), profile.render(p, True))
+
     def test_capture_and_generated_header(self):
         p = profile.load(profile.PROFILE)
         self.assertEqual(p['cu_active_number'], 8)

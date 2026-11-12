@@ -40,6 +40,19 @@ int main() {
     assert(t_780 == &g_phx_780m_default);
     assert(t_780->cu_active_number == 12);
 
+    const phx_topology *elitebook = phx_find_topology(0x1002, 0x15bf, 0xd7, 0x103c, 0x8b6e);
+    assert(elitebook == &phx_elitebook_780m);
+    assert(phx_topology_valid(elitebook));
+    assert(phx_topology_matches(elitebook, 0x1002, 0x15bf, 0xd7, 0x103c, 0x8b6e));
+    assert(elitebook->cu_active_number == 12 && elitebook->enabled_rb_pipes_mask == 0xf);
+    assert(elitebook->flags == PHX_TOPOLOGY_CAPTURED);
+    for (int compute = 0; compute < 2; compute++)
+        for (int gfx = 0; gfx < 2; gfx++)
+            assert(!!(phx_topology_runtime_flags(elitebook, compute, gfx) & PHX_TOPOLOGY_RUNTIME_READY) ==
+                   (compute && gfx));
+    assert(!phx_find_topology(0x1002, 0x15bf, 0xd6, 0x103c, 0x8b6e));
+    assert(!phx_find_topology(0x1002, 0x1900, 0xd7, 0x103c, 0x8b6e));
+
     // 5. Test invalid shapes
     phx_topology bad = g_phx_780m_default;
     bad.cu_active_number = 14; // Mismatch with bitmap popcount

@@ -25,12 +25,16 @@ Check (no GPU, in-process mock kext):
      come from the captured kernel profile; PCI identity follows the same data.
      Legacy kexts keep their existing fallback. Captured-only HP native use fails.
      No GB_ADDR_CONFIG, memory layout or firmware values are inferred from topology.
+     The shared header also contains the EliteBook 845 G10 capture (15bf/d7,
+     subsystem 103c:8b6e). Native readiness is reported only after both tested
+     queues are adopted; a capture is not proof of a working Tahoe desktop.
 
 Alternative to applying 0007 (do not do both):
   python3 /path/to/nullarc-760m/tools/mesa_phoenix_topology.py /path/to/mesa
 This generator verifies all source anchors before writing. Regenerate it and the
 patch together when changing the wire header/profile. Check the shared HP header:
   python3 tools/phx_profile.py --check
+  python3 tools/phx_profile.py hardware/profiles/elitebook-845-g10-780m.json --check
 
 Host transport tests (from the NullArc checkout):
   sh tools/test_mesa_topology.sh /path/to/mesa

@@ -24,7 +24,7 @@
 
 #include "PhxNativeABI.h"
 
-#define PHX_KEXT_BUILD 34u
+#define PHX_KEXT_BUILD 35u
 
 // debug.phxbos_flush: how a client's BOs are made coherent around each submission and each completed wait.
 // 2 = clflush every line (the bring-up way), 1 = clflushopt (the same lines, pipelined), 0 = none (the GPU maps system
@@ -107,7 +107,9 @@ public:
     // user BOs are then mapped into the VMID 8 page table and SUBMIT writes INDIRECT_BUFFERs into the queue's ring.
     IOReturn adoptQueue(const uint64_t in[6]);
     IOReturn claimAccel();
+    IOReturn layout(uint64_t out[4]) const;
     bool gpuReady() const { return gq[0].ready || gq[1].ready; }
+    bool topologyReady() const { return gq[0].ready && gq[1].ready; }
     // one GPUVM context (VMID 8..15) per client process: RADV instances allocate VAs independently
     uint32_t vmidAlloc();
     void vmidFree(uint32_t vmid, uint64_t lastSeq);
@@ -152,6 +154,7 @@ private:
     // Firmware bring-up regions (set when the ring is created): TMR the PSP copies firmware into, and fw_buf
     // where the CPU stages ucode for LOAD_IP_FW. Offsets are VRAM byte offsets, Mc the matching MC addresses.
     uint64_t tmrOff{0}, tmrMc{0}, tmrSize{0};
+    uint32_t tmrRequired{0};
     uint64_t fwBufOff{0}, fwBufMc{0}, fwBufSize{0};
     bool tmrSetUp{false};
     // E8 state: the adopted queues (ring/wb/fence are VRAM byte offsets reached through BAR0) and the VMID 8
@@ -268,6 +271,7 @@ private:
     IOReturn doDbgSysMem(IOExternalMethodArguments *a);
     IOReturn doDbgAdoptQueue(IOExternalMethodArguments *a);
     IOReturn doDbgClaim(IOExternalMethodArguments *a);
+    IOReturn doDbgLayout(IOExternalMethodArguments *a);
     void flushBos();
     Bo *findBo(uint32_t h);
     bool ibCovered(uint64_t vaCanon, uint64_t bytes);
@@ -447,11 +451,18 @@ void PhxBringup::wreg(uint32_t reg, uint32_t value) const {
 
 // FB location (MC, 16 MiB units, FB_BASE bits 23:0) and the system physical address of the carve-out (FB_OFFSET << 24).
 void PhxBringup::readFbLayout() {
-    uint32_t base = rreg(PHX_MMMC_VM_FB_LOCATION_BASE) & 0x00FFFFFF;
-    uint32_t top = rreg(PHX_MMMC_VM_FB_LOCATION_TOP) & 0x00FFFFFF;
+    if (mmio->getLength() < (PHX_MMMC_VM_FB_LOCATION_TOP + 1ull) * 4)
+        return;
+    uint32_t base = rreg(PHX_MMMC_VM_FB_LOCATION_BASE);
+    uint32_t top = rreg(PHX_MMMC_VM_FB_LOCATION_TOP);
+    uint32_t offset = rreg(PHX_MMMC_VM_FB_OFFSET);
+    if (base == 0xffffffffu || top == 0xffffffffu || offset == 0xffffffffu)
+        return;
+    base &= 0x00ffffffu;
+    top &= 0x00ffffffu;
     fbMcBase = static_cast<uint64_t>(base) << 24;
     fbSize = top >= base ? (static_cast<uint64_t>(top - base) + 1) << 24 : 0;
-    fbPhys = static_cast<uint64_t>(rreg(PHX_MMMC_VM_FB_OFFSET)) << 24;
+    fbPhys = static_cast<uint64_t>(offset) << 24;
     setProperty("phx-fb-mc-base", fbMcBase, 64);
     setProperty("phx-fb-size", fbSize, 64);
     setProperty("phx-fb-phys", fbPhys, 64);
@@ -477,6 +488,17 @@ void PhxBringup::readFbLayout() {
         pci->setProperty("VRAM,totalMB", fbSize >> 20, 32);
 }
 
+IOReturn PhxBringup::layout(uint64_t out[4]) const {
+    const phx_layout l{fbMcBase, fbSize, fbPhys, fbAperLen};
+    if (phx_layout_validate(&l))
+        return kIOReturnNotReady;
+    out[0] = l.vram_mc;
+    out[1] = l.vram_size;
+    out[2] = l.vram_pa;
+    out[3] = l.bar0_size;
+    return kIOReturnSuccess;
+}
+
 void PhxBringup::clearRing() {
     ringMc = ringOff = 0;
     cmdOff = cmdMc = fenceOff = fenceMc = 0;
@@ -484,6 +506,7 @@ void PhxBringup::clearRing() {
     tmrOff = tmrMc = tmrSize = 0;
     fwBufOff = fwBufMc = fwBufSize = 0;
     tmrSetUp = false;
+    tmrRequired = 0;
 }
 
 // Drain the host data path so the PSP sees our VRAM writes before we ring the doorbell (C2PMSG_67).
@@ -772,6 +795,8 @@ IOReturn PhxBringup::adoptQueue(const uint64_t in[6]) {
 IOReturn PhxBringup::claimAccel() {
     if (!pci || !gpuReady())
         return kIOReturnNotReady;
+    if (phx_topology_matches(topology, 0x1002, 0x15bf, 0xd7, 0x103c, 0x8b6e) && !topologyReady())
+        return kIOReturnNotReady;
     pci->setProperty("nmxgpu-claimed", kOSBooleanTrue);
     pci->registerService();
     IOLog("PhxBringup: GPU claimed for PhxAccel, matching re-run\n");
@@ -1029,9 +1054,10 @@ IOReturn PhxBringup::pspRing(uint32_t op, uint64_t carveOffset, uint64_t out[4])
     if (op == 1) {
         if (ringMc) {
             r = kIOReturnExclusiveAccess;   // a ring is already live; destroy it first
-        } else if ((carveOffset & 0xFFF) || carveOffset + PHX_PSP_FENCE_REL + 0x1000 > PHX_VRAM_TMR_OFF ||
-                   PHX_VRAM_FWBUF_OFF + PHX_VRAM_FWBUF_SIZE > fbAperLen) {
-            r = kIOReturnBadArgument;        // ring+cmd+fence must sit below the TMR; fw_buf must fit the aperture
+        } else if (const phx_layout l{fbMcBase, fbSize, fbPhys, fbAperLen};
+                   phx_layout_validate(&l) || (carveOffset & 0xfff) ||
+                   carveOffset != PHX_VRAM_RING_OFF) {
+            r = kIOReturnBadArgument;        // only the reserved ring region, clear of framebuffer/GART/queues/fw_buf
         } else {
             volatile uint32_t *ring = reinterpret_cast<volatile uint32_t *>(fbAper->getVirtualAddress() + carveOffset);
             uint32_t nonzero = 0;
@@ -1065,6 +1091,7 @@ IOReturn PhxBringup::pspRing(uint32_t op, uint64_t carveOffset, uint64_t out[4])
                     tmrMc = fbMcBase + tmrOff;
                     tmrSize = 0;
                     tmrSetUp = false;
+                    tmrRequired = 0;
                     fwBufOff = PHX_VRAM_FWBUF_OFF;
                     fwBufMc = fbMcBase + fwBufOff;
                     fwBufSize = PHX_VRAM_FWBUF_SIZE;
@@ -1203,7 +1230,7 @@ IOReturn PhxBringup::loadIpFw(uint32_t fwType, uint32_t fwBufOffset, uint32_t si
         return kIOReturnBadArgument;
     IOLockLock(smuLock);
     IOReturn r;
-    if (!ringMc) {
+    if (!ringMc || !tmrSetUp) {
         r = kIOReturnNotReady;
     } else {
         uint64_t mc = fwBufMc + fwBufOffset;
@@ -1214,7 +1241,8 @@ IOReturn PhxBringup::loadIpFw(uint32_t fwType, uint32_t fwBufOffset, uint32_t si
     return r;
 }
 
-// Selector 106: op 1 = SETUP_TMR (driver-managed TMR, Phoenix psp_13_0_4 is not in psp_skip_tmr), op 2 = AUTOLOAD_RLC.
+// Selector 106: op 1 = SETUP_TMR, op 2 = AUTOLOAD_RLC, op 3 = LOAD_TOC.
+// TOC supplies the required TMR size; both addresses come from MMHUB, not Firebat constants.
 IOReturn PhxBringup::pspCtl(uint32_t op, uint32_t arg, uint64_t out[4]) {
     if (!mmio || !fbAper)
         return kIOReturnNotReady;
@@ -1223,9 +1251,13 @@ IOReturn PhxBringup::pspCtl(uint32_t op, uint32_t arg, uint64_t out[4]) {
     if (!ringMc) {
         r = kIOReturnNotReady;
     } else if (op == 1) {
-        uint32_t size = arg ? arg : 0x400000u;
-        if (size > PHX_VRAM_TMR_CAP)
-            size = PHX_VRAM_TMR_CAP;
+        uint32_t size = arg ? arg : tmrRequired;
+        if (!tmrRequired || !phx_tmr_size_valid(size) || size < tmrRequired ||
+            tmrOff > fbSize || size > fbSize - tmrOff) {
+            IOLockUnlock(smuLock);
+            return kIOReturnBadArgument;     // never silently truncate firmware's request
+        }
+        tmrSetUp = false;
         tmrSize = size;
         // psp_gfx_cmd_setup_tmr (Linux psp_prep_tmr_cmd_buf): buf_phy_addr = TMR MC address, buf_size,
         // bitfield(virt_phy_addr=1 => 0x2), system_phy_addr = the REAL system-physical address of the TMR
@@ -1234,10 +1266,25 @@ IOReturn PhxBringup::pspCtl(uint32_t op, uint32_t arg, uint64_t out[4]) {
         uint32_t u[6] = {static_cast<uint32_t>(tmrMc), static_cast<uint32_t>(tmrMc >> 32), size, 0x2u,
                          static_cast<uint32_t>(tmrPa), static_cast<uint32_t>(tmrPa >> 32)};
         r = pspRunCmd(PHX_PSP_GFX_CMD_SETUP_TMR, u, 6, out);
-        if (r == kIOReturnSuccess)
+        if (r == kIOReturnSuccess && out[0] == 0)
             tmrSetUp = true;
     } else if (op == 2) {
-        r = pspRunCmd(PHX_PSP_GFX_CMD_AUTOLOAD_RLC, nullptr, 0, out);
+        r = tmrSetUp ? pspRunCmd(PHX_PSP_GFX_CMD_AUTOLOAD_RLC, nullptr, 0, out) : kIOReturnNotReady;
+    } else if (op == 3) {
+        tmrRequired = 0;
+        tmrSetUp = false;
+        tmrSize = 0;
+        if (!arg || arg > fwBufSize) {
+            IOLockUnlock(smuLock);
+            return kIOReturnBadArgument;
+        }
+        uint32_t u[3] = {static_cast<uint32_t>(fwBufMc), static_cast<uint32_t>(fwBufMc >> 32), arg};
+        r = pspRunCmd(PHX_PSP_GFX_CMD_LOAD_TOC, u, 3, out);
+        // psp_gfx_resp.tmr_size is at +16, not fw_addr_lo (+8) or uresp (+64).
+        out[2] = *reinterpret_cast<volatile uint32_t *>(fbAper->getVirtualAddress() + cmdOff +
+                                                     PHX_PSP_GFX_RESP_OFFSET + 16);
+        if (r == kIOReturnSuccess && out[0] == 0 && phx_tmr_size_valid(static_cast<uint32_t>(out[2])))
+            tmrRequired = static_cast<uint32_t>(out[2]);
     } else {
         r = kIOReturnBadArgument;
     }
@@ -1461,6 +1508,7 @@ IOReturn IOAccelPhxNativeClient::externalMethod(uint32_t selector, IOExternalMet
         case PHXN_SEL_DBG_SYSMEM: r = doDbgSysMem(a); break;
         case PHXN_SEL_DBG_ADOPTQ: r = doDbgAdoptQueue(a); break;
         case PHXN_SEL_DBG_CLAIM: r = doDbgClaim(a); break;
+        case PHXN_SEL_DBG_LAYOUT: r = doDbgLayout(a); break;
         default:                 r = kIOReturnBadArgument; break;
         }
     }
@@ -1523,6 +1571,9 @@ IOReturn IOAccelPhxNativeClient::doTopology(IOExternalMethodArguments *a) {
     if (!p)
         return kIOReturnUnsupported;
     bcopy(p, a->structureOutput, sizeof(*p));
+    // This EliteBook capture is metadata until both tested queues are adopted.
+    static_cast<phx_topology *>(a->structureOutput)->flags =
+        phx_topology_runtime_flags(p, owner->topologyReady(), owner->topologyReady());
     return kIOReturnSuccess;
 }
 
@@ -2081,6 +2132,20 @@ IOReturn IOAccelPhxNativeClient::doDbgClaim(IOExternalMethodArguments *a) {
     if (!shape(a, 1, 0, 0, 0) || a->scalarInput[0] != 1)
         return kIOReturnBadArgument;
     return owner->claimAccel();
+}
+
+IOReturn IOAccelPhxNativeClient::doDbgLayout(IOExternalMethodArguments *a) {
+    if (!owner->debugEnabled())
+        return kIOReturnUnsupported;
+    if (!privileged)
+        return kIOReturnNotPrivileged;
+    if (!shape(a, 0, 4, 0, 0))
+        return kIOReturnBadArgument;
+    uint64_t out[4] = {};
+    IOReturn r = owner->layout(out);
+    for (int i = 0; i < 4; i++)
+        a->scalarOutput[i] = out[i];
+    return r;
 }
 
 // Write back and invalidate the CPU caches over every BO: CPU-written data must be in memory before the GPU reads

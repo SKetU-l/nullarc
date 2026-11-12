@@ -101,15 +101,29 @@ static const struct phx_topology g_phx_740m_default = {
     {0, 0, 0}
 };
 
+#include "phx_elitebook_780m.h"
+
 static inline const struct phx_topology *phx_find_topology(uint32_t vendor, uint32_t device,
                                                            uint32_t revision, uint32_t subvendor,
                                                            uint32_t subdevice) {
-    (void)revision;
     if (vendor != 0x1002) return 0;
+    if (phx_topology_matches(&phx_elitebook_780m, vendor, device, revision, subvendor, subdevice))
+        return &phx_elitebook_780m;
+    // Do not substitute Firebat masks/identity for a different EliteBook revision.
+    if (subvendor == 0x103c && subdevice == 0x8b6e) return 0;
     if (subvendor == 0x103c && subdevice == 0x8c6a) return &g_phx_760m_default;
     if (device == 0x15c8) return &g_phx_740m_default;
     /* Default to 780M full profile for 0x1900 / 0x15bf / 0x164e */
     return &g_phx_780m_default;
+}
+
+static inline uint32_t phx_topology_runtime_flags(const struct phx_topology *p, int compute, int gfx) {
+    uint32_t flags = p->flags;
+    if (phx_topology_matches(p, 0x1002, 0x15bf, 0xd7, 0x103c, 0x8b6e)) {
+        flags &= ~PHX_TOPOLOGY_RUNTIME_READY;
+        if (compute && gfx) flags |= PHX_TOPOLOGY_RUNTIME_READY;
+    }
+    return flags;
 }
 
 #endif /* PHX_TOPOLOGY_H */

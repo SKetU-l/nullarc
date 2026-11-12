@@ -28,6 +28,14 @@ int main(void) {
     response = phx_hp_760m; wire_size = sizeof(response);
     assert(!acd_kext_query_topology(k, &p));
     assert(p.cu_active_number == 8 && p.enabled_rb_pipes_mask == 10);
+    response = phx_elitebook_780m;
+    assert(!acd_kext_query_topology(k, &p));
+    assert(phx_topology_matches(&p, 0x1002, 0x15bf, 0xd7, 0x103c, 0x8b6e));
+    assert(p.cu_active_number == 12 && p.enabled_rb_pipes_mask == 0xf);
+    assert(p.flags == PHX_TOPOLOGY_CAPTURED);
+    response.flags = phx_topology_runtime_flags(&response, 1, 1);
+    assert(!acd_kext_query_topology(k, &p) && (p.flags & PHX_TOPOLOGY_RUNTIME_READY));
+    response = phx_hp_760m;
     response.cu_bitmap[0][0] = 0x33; response.cu_bitmap[0][1] = 0x2d;
     assert(!acd_kext_query_topology(k, &p) && p.cu_bitmap[0][0] == 0x33);
     response.cu_active_number = 12;

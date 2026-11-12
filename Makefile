@@ -10,9 +10,10 @@ TESTS = $(TEST_BIN_DIR)/test_rdna3_discovery_uma \
         $(TEST_BIN_DIR)/test_rdna3_ucode \
         $(TEST_BIN_DIR)/test_r3n_abi \
         $(TEST_BIN_DIR)/test_phx_topology \
+        $(TEST_BIN_DIR)/test_phx_memory \
         $(TEST_BIN_DIR)/test_wait_seq
 
-.PHONY: all test clean kext fixtures
+.PHONY: all test test-bringup clean kext fixtures
 
 all: test
 
@@ -22,8 +23,11 @@ $(TEST_BIN_DIR):
 $(TEST_BIN_DIR)/test_wait_seq: tests/test_wait_seq.cpp | $(TEST_BIN_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) $^ -o $@ -lpthread
 
-$(TEST_BIN_DIR)/test_phx_topology: tests/test_phx_topology.cpp | $(TEST_BIN_DIR)
-	$(CXX) $(CXXFLAGS) $(INCLUDES) $^ -o $@
+$(TEST_BIN_DIR)/test_phx_topology: tests/test_phx_topology.cpp src/amd/phx_topology.h src/amd/phx_elitebook_780m.h | $(TEST_BIN_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $< -o $@
+
+$(TEST_BIN_DIR)/test_phx_memory: tests/test_phx_memory.cpp src/phxbringup/PhxMemoryLayout.h | $(TEST_BIN_DIR)
+	$(CXX) $(CXXFLAGS) $(INCLUDES) $< -o $@
 
 $(TEST_BIN_DIR)/test_rdna3_discovery_uma: src/amd/rdna3_ip_discovery.cpp src/amd/rdna3_rebar_uma.cpp tests/test_rdna3_discovery_uma.cpp | $(TEST_BIN_DIR)
 	$(CXX) $(CXXFLAGS) $(INCLUDES) $^ -o $@
@@ -47,6 +51,10 @@ test: $(TESTS)
 
 fixtures:
 	bash tools/fetch_test_firmware.sh tests/fixtures/phoenix
+
+test-bringup:
+	python3 -B tests/test_phx_profile.py
+	python3 -B tests/test_phx_bringup.py
 
 kext:
 	@echo "Building PhxBringup.kext..."

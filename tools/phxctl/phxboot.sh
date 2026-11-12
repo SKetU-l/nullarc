@@ -35,6 +35,12 @@ m2_fail() {
 # PhxAMDFB comes from the Aux KC, which loads well after PhxBringup: wait for the panel's framebuffer (PhxAMDFB, or
 # IONDRV when PhxAMDFB was not armed) before telling which one took it
 wait_fb() { for i in $(seq 1 90); do ioreg -rc IOFramebuffer -d0 | grep -q 'class ' && break; sleep 1; done; }
+bringup_fail() {
+    [ "$M2" = 1 ] && m2_fail "$1"
+    echo "bring-up failed ($1): accelerator not enabled; recovery remains armed"
+    touch "$OFF"; release; sync
+    exit 1                             # retain pending marker; never claim/re-arm after failure
+}
 if [ -e "$OFF" ]; then echo "kill switch present: nothing to do"; release; exit 0; fi
 if [ -e "$MARK" ]; then
     echo "previous attempt did not finish: phxboot and PhxAMDFB off"
@@ -49,8 +55,12 @@ ioreg -l | grep -q '"phx-build"' || { [ $M2 = 1 ] && m2_fail "PhxBringup not loa
 echo "PhxAMDFB on the panel: $M2"
 touch "$MARK"; sync
 apps_only
-MC=1 CS=1 ADOPT=1 GFX=1 AG=1 bash $G/full.sh kiqsched | grep -E "^compute:|^gfx:|adopt"
-$G/phxctl/mesboot claim
+if ! MC=1 CS=1 ADOPT=1 GFX=1 AG=1 bash $G/full.sh kiqsched; then
+    bringup_fail "firmware/GART/MES/queue test"
+fi
+if ! $G/phxctl/mesboot claim; then
+    bringup_fail "accelerator claim"
+fi
 # no BO cache flushing per submit/wait (the GPU maps system memory snooped): 41 fps window drag instead of 13, and no
 # artifacts seen (2026-10-20)
 sysctl -w debug.phxbos_flush=0 >/dev/null 2>&1

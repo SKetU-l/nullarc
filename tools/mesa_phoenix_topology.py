@@ -7,7 +7,7 @@ refused until the kernel reports runtime readiness. Mock profile is opt-in.
 """
 import argparse
 from pathlib import Path
-from phx_profile import PROFILE, HEADER, load, render
+from phx_profile import PROFILE, HEADER, ELITEBOOK_PROFILE, ELITEBOOK_HEADER, load, render
 
 
 def replace_once(text, old, new):
@@ -20,6 +20,10 @@ def apply(root):
     repo = Path(__file__).resolve().parents[1]
     if HEADER.read_text() != render(load(PROFILE)):
         raise ValueError('generated HP profile is stale')
+    if ELITEBOOK_HEADER.read_text() != render(load(ELITEBOOK_PROFILE), True):
+        raise ValueError('generated EliteBook profile is stale')
+    headers = {name: (repo / 'src/amd' / name).read_text()
+               for name in ('phx_topology.h', 'phx_hp_760m.h', 'phx_elitebook_780m.h')}
     base = root / 'src/amd/common/darwin'
     paths = [base / n for n in ('ac_darwin_kext.h', 'ac_darwin_kext.c', 'ac_darwin_drm.h',
                                 'ac_darwin_drm.c', 'ac_darwin_mock.c')]
@@ -65,7 +69,7 @@ acd_kext_query_topology(struct acd_kext *k, struct phx_topology *out)
     dc = replace_once(dc, 'acd_native_handshake(c->kext, canned, &c->minor)',
                           'acd_native_handshake(c->kext, canned, &c->minor, &c->topology)')
     dc = replace_once(dc, '   if (!strcmp(dev->canned->name, "phoenix"))\n      return "AMD Radeon 780M Graphics";',
-                          '   const struct phx_topology *p = &dev->core->topology;\n   if (phx_topology_matches(p, phx_hp_760m.vendor, phx_hp_760m.device, phx_hp_760m.revision, phx_hp_760m.subvendor, phx_hp_760m.subdevice))\n      return "AMD Radeon 760M Graphics";\n   if (p->version) return "AMD Phoenix captured profile";\n   if (!strcmp(dev->canned->name, "phoenix"))\n      return "AMD Radeon 780M Graphics";')
+                           '   const struct phx_topology *p = &dev->core->topology;\n   if (phx_topology_matches(p, phx_hp_760m.vendor, phx_hp_760m.device, phx_hp_760m.revision, phx_hp_760m.subvendor, phx_hp_760m.subdevice))\n      return "AMD Radeon 760M Graphics";\n   if (phx_topology_matches(p, phx_elitebook_780m.vendor, phx_elitebook_780m.device, phx_elitebook_780m.revision, phx_elitebook_780m.subvendor, phx_elitebook_780m.subdevice))\n      return "AMD Radeon 780M Graphics";\n   if (p->version) return "AMD Phoenix captured profile";\n   if (!strcmp(dev->canned->name, "phoenix"))\n      return "AMD Radeon 780M Graphics";')
     dc = replace_once(dc, '      return 0;\n   }\n   case AMDGPU_INFO_MEMORY:', '''      const struct phx_topology *p = &dev->core->topology;
       if (p->version) {
          di->device_id = p->device;
@@ -125,8 +129,8 @@ acd_profile_identity(struct phx_topology *out)
         'CHECK(strcmp(acd_kext_service_class(), "PhxBringup") == 0); /* Phoenix patch 0003 changes the default */')
     for p, s in zip(paths, (kh, kc, dh, dc, mock, radv, test)):
         p.write_text(s)
-    for name in ('phx_topology.h', 'phx_hp_760m.h'):
-        (base / name).write_text((repo / 'src/amd' / name).read_text())
+    for name, content in headers.items():
+        (base / name).write_text(content)
     print('applied captured topology transport, RADV DEV_INFO and PCI identity; HP mock is opt-in')
 
 
